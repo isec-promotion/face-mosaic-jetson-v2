@@ -62,8 +62,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--youtube-ingest",
-        default="rtmps://a.rtmps.youtube.com:443/live2",
-        help="YouTube RTMPSエンドポイント (デフォルト: %(default)s)",
+        default="rtmp://a.rtmp.youtube.com/live2",
+        help="YouTube RTMPエンドポイント (デフォルト: %(default)s)",
     )
     parser.add_argument(
         "--log-level",
