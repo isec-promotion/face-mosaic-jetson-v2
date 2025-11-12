@@ -23,7 +23,7 @@ gi.require_version("Gst", "1.0")
 gi.require_version("GLib", "2.0")
 from gi.repository import Gst, GLib  # noqa: E402
 
-import pyds  # noqa: E402
+# import pyds  # noqa: E402  # DeepStream 7.1 にPythonバインディングが含まれていない
 
 
 LOG = logging.getLogger("deepstream-face-streamer")
@@ -142,38 +142,8 @@ def decodebin_child_added(child_proxy, object, name):
 
 def osd_sink_pad_buffer_probe(pad, info, _u_data):
     """検出済みの顔をGPU上で塗りつぶし矩形に変換する。"""
-    gst_buffer = info.get_buffer()
-    if not gst_buffer:
-        LOG.warning("Unable to get GstBuffer")
-        return Gst.PadProbeReturn.OK
-
-    # DeepStream 7.1 compatible API
-    try:
-        batch_meta = pyds.gst_buffer_get_nvds_batch_meta(gst_buffer)
-    except Exception:
-        # Fallback for older API
-        batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
-    
-    if not batch_meta:
-        return Gst.PadProbeReturn.OK
-
-    l_frame = batch_meta.frame_list
-    while l_frame:
-        frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
-        l_obj = frame_meta.obj_meta_list
-        while l_obj:
-            obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
-            if obj_meta.class_id == 0:
-                rect_params = obj_meta.rect_params
-                rect_params.border_width = 0
-                rect_params.has_bg_color = 1
-                rect_params.bg_color.set(0.0, 0.0, 0.0, 1.0)
-                text_params = obj_meta.text_params
-                text_params.display_text = ""
-                text_params.set_bg_clr = 0
-                text_params.set_font_clr = 0
-            l_obj = l_obj.next
-        l_frame = l_frame.next
+    # TODO: DeepStream Pythonバインディング（pyds）が利用可能になったら実装
+    # 現在は顔検出のみ実行（バウンディングボックスが表示される）
     return Gst.PadProbeReturn.OK
 
 
@@ -279,10 +249,11 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     if not flvmux.link(sink):
         raise RuntimeError("Failed to link flvmux -> rtmpsink")
 
-    osd_sink_pad = nvosd.get_static_pad("sink")
-    if not osd_sink_pad:
-        raise RuntimeError("Unable to get OSD sink pad")
-    osd_sink_pad.add_probe(Gst.PadProbeType.BUFFER, osd_sink_pad_buffer_probe, None)
+    # マスキング処理は一時的にスキップ
+    # osd_sink_pad = nvosd.get_static_pad("sink")
+    # if not osd_sink_pad:
+    #     raise RuntimeError("Unable to get OSD sink pad")
+    # osd_sink_pad.add_probe(Gst.PadProbeType.BUFFER, osd_sink_pad_buffer_probe, None)
 
     return pipeline
 
