@@ -13,7 +13,7 @@ maintain-aspect-ratio=1
 infer-dims=3;640;640
 labelfile-path=models/labels_face.txt
 
-custom-lib-path=/opt/nvidia/deepstream/deepstream/sources/objectDetector_Yolo/nvdsinfer_custom_impl_yolo/libnvdsinfer_custom_impl_yolo.so
+custom-lib-path=/opt/nvidia/deepstream/deepstream-7.1/lib/libnvdsinfer_custom_impl_yolo.so
 parse-bbox-func-name=NvDsInferParseYolo
 engine-create-func-name=NvDsInferYoloCudaEngineGet
 

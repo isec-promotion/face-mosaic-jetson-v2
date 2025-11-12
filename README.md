@@ -83,7 +83,7 @@ python3 scripts/convert_yolo_to_onnx.py
 
 ## 設定のポイント
 
-- YOLOv8 カスタムライブラリ（`libnvdsinfer_custom_impl_yolo.so`）を使用して顔検出を実行します
+- YOLOv8 カスタムライブラリ（`/opt/nvidia/deepstream/deepstream-7.1/lib/libnvdsinfer_custom_impl_yolo.so`）を使用して顔検出を実行します
 - `network-mode=2`で FP16 推論を有効化し、Orin NX Super 向けに精度と速度のバランスを確保します
 - 入力解像度は 640x640、検出閾値は 0.30 に設定されています
 - 本スクリプトは黒塗り矩形で顔を隠します。モザイク化が必須の場合は VPI や PyCUDA を使った独自 CUDA カーネルを pad probe 内で実装してください
@@ -143,7 +143,14 @@ python3 deepstream_youtube.py \
 
 - **ONNX ファイルが見つからない**: `scripts/convert_yolo_to_onnx.py`を実行して ONNX ファイルを生成してください
 
-- **YOLO カスタムライブラリのエラー**: DeepStream 7.1 が正しくインストールされているか確認してください
+- **YOLO カスタムライブラリのエラー**:
+
+  - DeepStream 7.1 が正しくインストールされているか確認してください
+  - カスタムライブラリパスを確認してください:
+    ```bash
+    ls -l /opt/nvidia/deepstream/deepstream-7.1/lib/libnvdsinfer_custom_impl_yolo.so
+    ```
+  - ファイルが存在しない場合は、DeepStream のバージョンに応じてパスを調整してください
 
 - **顔が検出されない**:
   - YOLOv8n-face モデルが正しく配置されているか確認
