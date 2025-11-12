@@ -182,7 +182,6 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         "youtube-sink",
         location=args.youtube_url,
         sync=False,
-        async_=False,
     )
     
     # パイプラインに要素を追加
