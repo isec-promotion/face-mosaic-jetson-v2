@@ -50,15 +50,21 @@ pip3 install ultralytics pyds
 YOLOv8n-face モデルをダウンロードし、`models/`ディレクトリに配置してください：
 
 ```bash
-# 例: Hugging Face等からダウンロード
-# wget https://example.com/yolov8n-face.pt -O models/yolov8n-face.pt
+# 推奨: Hugging Faceからダウンロード
+wget https://huggingface.co/arnabdhar/YOLOv8-Face-Detection/resolve/main/model.pt -O models/yolov8n-face.pt
 
-# または、独自に学習したモデルを配置
-cp /path/to/your/yolov8n-face.pt models/
+# または、GitHubリリースからダウンロード
+# wget https://github.com/akanametov/yolov8-face/releases/download/v1.0/yolov8n-face.pt -O models/yolov8n-face.pt
+
+# ダウンロード後、ファイルサイズを確認（約6MB程度が目安）
+ls -lh models/yolov8n-face.pt
 ```
 
-> **注**: YOLOv8n-face モデルは顔検出用にファインチューニングされた YOLOv8n モデルです。
-> 公式の Ultralytics リポジトリや各種モデルハブから入手できます。
+> **重要**: ダウンロードが完了したら、ファイルサイズを必ず確認してください。  
+> 不完全なダウンロードや破損したファイルは、変換時にエラーが発生します。
+
+> **注**: YOLOv8n-face モデルは顔検出用にファインチューニングされた YOLOv8n モデルです。  
+> 上記以外にも、各種モデルハブから入手できます。
 
 ### 2. ONNX への変換
 
@@ -116,8 +122,29 @@ python3 deepstream_youtube.py \
 
 ### モデル関連
 
+- **ONNX 変換時の EOFError（"Ran out of input"）**:
+
+  - モデルファイル（.pt）が破損しているか、ダウンロードが不完全です
+  - 解決方法:
+
+    ```bash
+    # 既存のモデルファイルを削除
+    rm models/yolov8n-face.pt
+
+    # 再度ダウンロード
+    wget https://huggingface.co/arnabdhar/YOLOv8-Face-Detection/resolve/main/model.pt -O models/yolov8n-face.pt
+
+    # ファイルサイズを確認（約6MB程度が目安）
+    ls -lh models/yolov8n-face.pt
+
+    # 再度変換を試行
+    python3 scripts/convert_yolo_to_onnx.py
+    ```
+
 - **ONNX ファイルが見つからない**: `scripts/convert_yolo_to_onnx.py`を実行して ONNX ファイルを生成してください
+
 - **YOLO カスタムライブラリのエラー**: DeepStream 7.1 が正しくインストールされているか確認してください
+
 - **顔が検出されない**:
   - YOLOv8n-face モデルが正しく配置されているか確認
   - 検出閾値（`pre-cluster-threshold`）を調整してみてください

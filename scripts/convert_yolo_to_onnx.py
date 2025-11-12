@@ -30,6 +30,19 @@ def convert_yolo_to_onnx():
         print("2. models/yolov8n-face.pt として配置")
         sys.exit(1)
     
+    # ファイルサイズのチェック
+    file_size = pt_file.stat().st_size
+    if file_size < 1024 * 1024:  # 1MB未満の場合は警告
+        print(f"警告: モデルファイルサイズが小さすぎます: {file_size / 1024:.2f} KB")
+        print("ファイルが正しくダウンロードされていない可能性があります。")
+        print("\n以下を確認してください:")
+        print("1. ダウンロードが完了しているか")
+        print("2. ファイルが破損していないか")
+        print("3. 正しいYOLOv8n-faceモデルファイルか")
+        sys.exit(1)
+    
+    print(f"✓ モデルファイルサイズ: {file_size / (1024 * 1024):.2f} MB")
+    
     try:
         from ultralytics import YOLO
         print(f"✓ ultralyticsパッケージが見つかりました")
@@ -40,7 +53,26 @@ def convert_yolo_to_onnx():
         sys.exit(1)
     
     print(f"\nYOLOv8モデルをロード中: {pt_file}")
-    model = YOLO(str(pt_file))
+    try:
+        model = YOLO(str(pt_file))
+    except EOFError:
+        print("\nエラー: モデルファイルが破損しているか、不完全です。")
+        print("\n考えられる原因:")
+        print("1. ダウンロードが途中で中断された")
+        print("2. ファイル転送中にエラーが発生した")
+        print("3. ストレージの容量が不足している")
+        print("\n解決方法:")
+        print("1. モデルファイルを削除してください:")
+        print(f"   rm {pt_file}")
+        print("2. 再度ダウンロードしてください")
+        print("3. ダウンロード完了後、ファイルサイズを確認してください")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\nエラー: モデルのロードに失敗しました: {e}")
+        print("\n以下を確認してください:")
+        print("1. 正しいYOLOv8形式のモデルファイルか")
+        print("2. PyTorchとultralyticsのバージョンが互換性があるか")
+        sys.exit(1)
     
     print(f"ONNX形式に変換中...")
     print(f"  入力: {pt_file}")
