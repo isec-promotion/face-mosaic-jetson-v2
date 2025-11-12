@@ -1,7 +1,7 @@
 [property]
 gpu-id=0
 network-type=0
-onnx-file=/opt/models/yolov8n-face.onnx
+onnx-file=models/yolov8n-face.onnx
 model-color-format=0
 network-mode=2
 batch-size=1
@@ -11,7 +11,7 @@ interval=0
 gie-unique-id=1
 maintain-aspect-ratio=1
 infer-dims=3;640;640
-labelfile-path=/opt/models/labels_face.txt
+labelfile-path=models/labels_face.txt
 
 custom-lib-path=/opt/nvidia/deepstream/deepstream/sources/objectDetector_Yolo/nvdsinfer_custom_impl_yolo/libnvdsinfer_custom_impl_yolo.so
 parse-bbox-func-name=NvDsInferParseYolo
