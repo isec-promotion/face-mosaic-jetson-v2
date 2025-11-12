@@ -1,31 +1,16 @@
 [property]
 gpu-id=0
-net-scale-factor=1.0
-model-engine-file=./tlt_facedetect_pruned_v1.0/resnet18_facedetect_pruned.etlt_b1_gpu0_fp16.engine
-tlt-model-key=nvidia_tlt
-tlt-encoded-model=./tlt_facedetect_pruned_v1.0/resnet18_facedetect_pruned.etlt
-int8-calib-file=./tlt_facedetect_pruned_v1.0/calibration.bin
+onnx-file=facenet_yourmodel.onnx          # または engine-file-path=yourmodel.engine
+model-color-format=0
+network-mode=2                             # 0:FP32, 1:INT8, 2:FP16（環境に合わせて）
 batch-size=1
-network-mode=2
-network-type=0
+process-mode=1                             # primary
 num-detected-classes=1
 interval=0
 gie-unique-id=1
-output-tensor-meta=1
-maintain-aspect-ratio=1
-process-mode=1
-operate-on-gie-id=1
-operate-on-class-ids=0
-cluster-mode=2
-pre-cluster-threshold=0.5
-max-cluster-count=300
-custom-lib-path=/opt/nvidia/deepstream/deepstream/lib/libnvdsparsebbox_facedetect.so
-parse-bbox-func-name=NvDsInferParseCustomFaceDetect
-input-blob-name=input_1
-output-blob-names=output_cov/Sigmoid;output_bbox/BiasAdd
+# input-blob-name は通常不要（未指定でOK）
 
 [class-attrs-all]
-pre-cluster-threshold=0.5
-eps=0.2
-group-threshold=1
-topk=200
+nms-iou-threshold=0.5
+pre-threshold=0.3                          # 旧 pre-cluster-threshold 相当
+topk=300                                   # 旧 max-cluster-count 相当（実装により名称差）
