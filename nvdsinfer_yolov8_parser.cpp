@@ -36,16 +36,28 @@ extern "C" bool NvDsInferParseYoloV8(
 
     const NvDsInferLayerInfo &output = outputLayersInfo[0];
     
-    // YOLOv8 output shape: [batch=1, num_classes+4, num_anchors=8400]
-    if (output.inferDims.numDims != 3) {
-        std::cerr << "ERROR: YOLOv8 output should have 3 dimensions, got " 
+    // YOLOv8 output shape can be:
+    // 2D: [num_classes+4, num_anchors] = [5, 8400]
+    // 3D: [batch, num_classes+4, num_anchors] = [1, 5, 8400]
+    
+    int batch = 1;
+    int num_data = 0;
+    int num_anchors = 0;
+    
+    if (output.inferDims.numDims == 2) {
+        // 2D format: [num_classes+4, num_anchors]
+        num_data = output.inferDims.d[0];
+        num_anchors = output.inferDims.d[1];
+    } else if (output.inferDims.numDims == 3) {
+        // 3D format: [batch, num_classes+4, num_anchors]
+        batch = output.inferDims.d[0];
+        num_data = output.inferDims.d[1];
+        num_anchors = output.inferDims.d[2];
+    } else {
+        std::cerr << "ERROR: YOLOv8 output should have 2 or 3 dimensions, got " 
                   << output.inferDims.numDims << std::endl;
         return false;
     }
-
-    const int batch = output.inferDims.d[0];
-    const int num_data = output.inferDims.d[1];  // num_classes + 4
-    const int num_anchors = output.inferDims.d[2];  // 8400
     
     const int num_classes = num_data - 4;  // Should be 1 for face detection
     
@@ -62,9 +74,8 @@ extern "C" bool NvDsInferParseYoloV8(
         int max_class_id = 0;
         
         for (int cls = 0; cls < num_classes; cls++) {
-            int score_idx = batch * num_data * num_anchors + 
-                           (4 + cls) * num_anchors + 
-                           anchor_idx;
+            // Index calculation for 2D or 3D tensor
+            int score_idx = (4 + cls) * num_anchors + anchor_idx;
             float score = data[score_idx];
             
             if (score > max_score) {
@@ -80,10 +91,10 @@ extern "C" bool NvDsInferParseYoloV8(
         
         // Get bounding box coordinates
         // YOLOv8 format: [x_center, y_center, width, height] in normalized coords
-        int x_idx = batch * num_data * num_anchors + 0 * num_anchors + anchor_idx;
-        int y_idx = batch * num_data * num_anchors + 1 * num_anchors + anchor_idx;
-        int w_idx = batch * num_data * num_anchors + 2 * num_anchors + anchor_idx;
-        int h_idx = batch * num_data * num_anchors + 3 * num_anchors + anchor_idx;
+        int x_idx = 0 * num_anchors + anchor_idx;
+        int y_idx = 1 * num_anchors + anchor_idx;
+        int w_idx = 2 * num_anchors + anchor_idx;
+        int h_idx = 3 * num_anchors + anchor_idx;
         
         float x_center = data[x_idx];
         float y_center = data[y_idx];
