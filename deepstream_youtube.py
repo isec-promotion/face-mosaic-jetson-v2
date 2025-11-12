@@ -236,13 +236,11 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     )
     h264parser = make_element("h264parse", "h264-parser")
     flvmux = make_element("flvmux", "flv-muxer", streamable=True)
-    sink = make_element(
-        "rtmpsink",
-        "youtube-sink",
-        location=args.youtube_url,
-        sync=False,
-        async_=False,
-    )
+    sink = make_element("rtmpsink", "youtube-sink", **{
+        "location": args.youtube_url,
+        "sync": False,
+        "async": False,
+    })
 
     for elem in (
         source,

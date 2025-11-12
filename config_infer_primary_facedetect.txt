@@ -1,16 +1,25 @@
 [property]
 gpu-id=0
-onnx-file=facenet_yourmodel.onnx          # または engine-file-path=yourmodel.engine
+network-type=0
+onnx-file=/opt/models/yolov8n-face.onnx
 model-color-format=0
-network-mode=2                             # 0:FP32, 1:INT8, 2:FP16（環境に合わせて）
+network-mode=2
 batch-size=1
-process-mode=1                             # primary
+process-mode=1
 num-detected-classes=1
 interval=0
 gie-unique-id=1
-# input-blob-name は通常不要（未指定でOK）
+maintain-aspect-ratio=1
+# 入力サイズはモデルに合わせて
+infer-dims=3;640;640
+labelfile-path=/opt/models/labels_face.txt
+
+# YOLO parser/custom
+custom-lib-path=/opt/nvidia/deepstream/deepstream/sources/objectDetector_Yolo/nvdsinfer_custom_impl_yolo/libnvdsinfer_custom_impl_yolo.so
+parse-bbox-func-name=NvDsInferParseYolo
+engine-create-func-name=NvDsInferYoloCudaEngineGet
 
 [class-attrs-all]
-nms-iou-threshold=0.5
-pre-threshold=0.3                          # 旧 pre-cluster-threshold 相当
-topk=300                                   # 旧 max-cluster-count 相当（実装により名称差）
+pre-threshold=0.30
+nms-iou-threshold=0.50
+topk=300
