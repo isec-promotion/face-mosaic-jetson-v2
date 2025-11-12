@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RTSP→顔モザイク→YouTube Live配信プログラム
-OpenCV DNN（CUDA）を使用した顔検出版
+YOLOv8n-face を使用した顔検出版
 
 使い方:
     python3 deepstream_youtube-v2.py "<RTSP_URL>" "<YOUTUBE_STREAM_KEY>"
@@ -14,11 +14,20 @@ import cv2
 import numpy as np
 import threading
 from queue import Queue, Full
+from pathlib import Path
 
 import gi
 gi.require_version("Gst", "1.0")
 gi.require_version("GLib", "2.0")
 from gi.repository import Gst, GLib
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    print("エラー: ultralyticsパッケージがインストールされていません")
+    print("以下のコマンドでインストールしてください:")
+    print("  pip install ultralytics")
+    sys.exit(1)
 
 LOG = logging.getLogger("face-mosaic-streamer")
 
@@ -123,74 +132,64 @@ def apply_mosaic(image, x, y, w, h, ratio=0.05):
 
 
 class FaceDetector:
-    """OpenCV DNN（CUDA）を使った顔検出"""
+    """YOLOv8n-faceを使った顔検出"""
     def __init__(self, confidence_threshold=0.5):
         self.confidence_threshold = confidence_threshold
         
-        # OpenCV DNN 顔検出モデル（Caffe）
-        import os
-        import urllib.request
+        # YOLOv8n-faceモデルのパス
+        model_path = Path("models/yolov8n-face.pt")
         
-        model_dir = "models/face_detector"
-        os.makedirs(model_dir, exist_ok=True)
+        if not model_path.exists():
+            LOG.error(f"YOLOv8n-faceモデルが見つかりません: {model_path}")
+            LOG.error("以下のコマンドでモデルをダウンロードしてください:")
+            LOG.error("  wget https://huggingface.co/arnabdhar/YOLOv8-Face-Detection/resolve/main/model.pt -O models/yolov8n-face.pt")
+            raise FileNotFoundError(f"Model not found: {model_path}")
         
-        model_file = f"{model_dir}/res10_300x300_ssd_iter_140000_fp16.caffemodel"
-        config_file = f"{model_dir}/deploy.prototxt"
+        LOG.info(f"YOLOv8n-faceモデルを読み込み中: {model_path}")
         
-        # モデルファイルをダウンロード（存在しない場合）
-        if not os.path.exists(config_file):
-            LOG.info("顔検出モデル設定ファイルをダウンロード中...")
-            url = "https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt"
-            urllib.request.urlretrieve(url, config_file)
-            LOG.info("設定ファイルのダウンロード完了")
+        # YOLOv8モデルを読み込み
+        self.model = YOLO(str(model_path))
         
-        if not os.path.exists(model_file):
-            LOG.info("顔検出モデルをダウンロード中（約10MB、数秒かかります）...")
-            url = "https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000_fp16.caffemodel"
-            urllib.request.urlretrieve(url, model_file)
-            LOG.info("モデルファイルのダウンロード完了")
+        # GPU利用可能かチェック
+        import torch
+        if torch.cuda.is_available():
+            LOG.info("CUDA利用可能 - GPUで顔検出を実行します")
+            self.model.to('cuda')
+        else:
+            LOG.info("CUDA利用不可 - CPUで顔検出を実行します")
         
-        try:
-            self.net = cv2.dnn.readNetFromCaffe(config_file, model_file)
-            # CUDA backend設定を試みる
-            try:
-                self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-                self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-                LOG.info("顔検出モデルをCUDAバックエンドで読み込みました")
-            except:
-                LOG.info("顔検出モデルをCPUで実行します")
-        except Exception as e:
-            LOG.error(f"顔検出モデルの読み込みに失敗しました: {e}")
-            raise
+        LOG.info("YOLOv8n-face読み込み完了")
     
     def detect(self, frame):
         """フレーム内の顔を検出"""
-        (h, w) = frame.shape[:2]
-        
-        # ブロブを作成
-        blob = cv2.dnn.blobFromImage(
-            cv2.resize(frame, (300, 300)), 1.0, (300, 300), 
-            (104.0, 177.0, 123.0)
+        # YOLOv8で推論（クラス0のみ=顔）
+        results = self.model(
+            frame,
+            conf=self.confidence_threshold,
+            verbose=False
         )
         
-        self.net.setInput(blob)
-        detections = self.net.forward()
-        
         faces = []
-        for i in range(detections.shape[2]):
-            confidence = detections[0, 0, i, 2]
-            
-            if confidence > self.confidence_threshold:
-                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                (startX, startY, endX, endY) = box.astype("int")
+        for result in results:
+            boxes = result.boxes
+            for box in boxes:
+                # バウンディングボックスの座標を取得
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                
+                # x, y, w, h形式に変換
+                x = x1
+                y = y1
+                w = x2 - x1
+                h = y2 - y1
                 
                 # 境界チェック
-                startX = max(0, startX)
-                startY = max(0, startY)
-                endX = min(w, endX)
-                endY = min(h, endY)
+                x = max(0, x)
+                y = max(0, y)
+                w = min(w, frame.shape[1] - x)
+                h = min(h, frame.shape[0] - y)
                 
-                faces.append((startX, startY, endX - startX, endY - startY))
+                if w > 0 and h > 0:
+                    faces.append((x, y, w, h))
         
         return faces
 
