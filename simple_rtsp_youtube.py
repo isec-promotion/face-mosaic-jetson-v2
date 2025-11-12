@@ -147,13 +147,19 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     # ビデオ変換（NVMM対応）
     nvvidconv = make_element("nvvideoconvert", "nv-video-converter")
     
-    # フォーマット指定（より柔軟に）
-    caps_str = f"video/x-raw(memory:NVMM), width={args.width}, height={args.height}, framerate={args.fps}/1"
+    # キュー（バッファリング用）
+    queue1 = make_element("queue", "queue1")
+    
+    # エンコーダー用のフォーマット指定
+    caps_str = "video/x-raw(memory:NVMM), format=(string)NV12"
     capsfilter = make_element(
         "capsfilter",
         "caps-filter",
         caps=Gst.Caps.from_string(caps_str)
     )
+    
+    # キュー2
+    queue2 = make_element("queue", "queue2")
     
     # H.264 エンコーダー（Jetson HWエンコーダー）
     encoder = make_element(
@@ -179,14 +185,18 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     )
     
     # パイプラインに要素を追加
-    for elem in (source, nvvidconv, capsfilter, encoder, h264parser, flvmux, sink):
+    for elem in (source, nvvidconv, queue1, capsfilter, queue2, encoder, h264parser, flvmux, sink):
         pipeline.add(elem)
     
     # 要素をリンク（sourceは動的にリンク）
-    if not nvvidconv.link(capsfilter):
-        raise RuntimeError("nvvideoconvert -> capsfilter のリンクに失敗")
-    if not capsfilter.link(encoder):
-        raise RuntimeError("capsfilter -> encoder のリンクに失敗")
+    if not nvvidconv.link(queue1):
+        raise RuntimeError("nvvideoconvert -> queue1 のリンクに失敗")
+    if not queue1.link(capsfilter):
+        raise RuntimeError("queue1 -> capsfilter のリンクに失敗")
+    if not capsfilter.link(queue2):
+        raise RuntimeError("capsfilter -> queue2 のリンクに失敗")
+    if not queue2.link(encoder):
+        raise RuntimeError("queue2 -> encoder のリンクに失敗")
     if not encoder.link(h264parser):
         raise RuntimeError("encoder -> h264parse のリンクに失敗")
     if not h264parser.link(flvmux):
