@@ -190,6 +190,9 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     source.connect("pad-added", on_decodebin_pad_added, streammux)
     source.connect("child-added", decodebin_child_added)
 
+    # nvstreammux後のキュー
+    queue_mux = make_element("queue", "queue-mux")
+
     pgie = make_element("nvinfer", "primary-inference", config_file_path=args.infer_config)
 
     nvosd = make_element(
@@ -239,6 +242,7 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     for elem in (
         source,
         streammux,
+        queue_mux,
         pgie,
         nvosd,
         nvvidconv,
@@ -258,8 +262,10 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         pipeline.add(elem)
 
     # ビデオパイプラインをリンク
-    if not streammux.link(pgie):
-        raise RuntimeError("Failed to link streammux -> pgie")
+    if not streammux.link(queue_mux):
+        raise RuntimeError("Failed to link streammux -> queue_mux")
+    if not queue_mux.link(pgie):
+        raise RuntimeError("Failed to link queue_mux -> pgie")
     if not pgie.link(nvosd):
         raise RuntimeError("Failed to link pgie -> nvosd")
     if not nvosd.link(nvvidconv):
