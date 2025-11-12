@@ -128,18 +128,40 @@ class FaceDetector:
         self.confidence_threshold = confidence_threshold
         
         # OpenCV DNN 顔検出モデル（Caffe）
-        model_file = "/usr/share/opencv4/samples/dnn/face_detector/res10_300x300_ssd_iter_140000_fp16.caffemodel"
-        config_file = "/usr/share/opencv4/samples/dnn/face_detector/deploy.prototxt"
+        import os
+        import urllib.request
+        
+        model_dir = "models/face_detector"
+        os.makedirs(model_dir, exist_ok=True)
+        
+        model_file = f"{model_dir}/res10_300x300_ssd_iter_140000_fp16.caffemodel"
+        config_file = f"{model_dir}/deploy.prototxt"
+        
+        # モデルファイルをダウンロード（存在しない場合）
+        if not os.path.exists(config_file):
+            LOG.info("顔検出モデル設定ファイルをダウンロード中...")
+            url = "https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt"
+            urllib.request.urlretrieve(url, config_file)
+            LOG.info("設定ファイルのダウンロード完了")
+        
+        if not os.path.exists(model_file):
+            LOG.info("顔検出モデルをダウンロード中（約10MB、数秒かかります）...")
+            url = "https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000_fp16.caffemodel"
+            urllib.request.urlretrieve(url, model_file)
+            LOG.info("モデルファイルのダウンロード完了")
         
         try:
             self.net = cv2.dnn.readNetFromCaffe(config_file, model_file)
-            # CUDA backend設定
-            self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-            self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-            LOG.info("顔検出モデルをCUDAバックエンドで読み込みました")
+            # CUDA backend設定を試みる
+            try:
+                self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+                self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+                LOG.info("顔検出モデルをCUDAバックエンドで読み込みました")
+            except:
+                LOG.info("顔検出モデルをCPUで実行します")
         except Exception as e:
-            LOG.warning(f"CUDAバックエンド設定に失敗、CPUを使用します: {e}")
-            self.net = cv2.dnn.readNetFromCaffe(config_file, model_file)
+            LOG.error(f"顔検出モデルの読み込みに失敗しました: {e}")
+            raise
     
     def detect(self, frame):
         """フレーム内の顔を検出"""
