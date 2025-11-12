@@ -195,6 +195,9 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
 
     pgie = make_element("nvinfer", "primary-inference", config_file_path=args.infer_config)
 
+    # nvinfer後のキュー
+    queue_pgie = make_element("queue", "queue-pgie")
+
     nvosd = make_element(
         "nvdsosd",
         "on-screen-display",
@@ -244,6 +247,7 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         streammux,
         queue_mux,
         pgie,
+        queue_pgie,
         nvosd,
         nvvidconv,
         capsfilter,
@@ -266,8 +270,10 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         raise RuntimeError("Failed to link streammux -> queue_mux")
     if not queue_mux.link(pgie):
         raise RuntimeError("Failed to link queue_mux -> pgie")
-    if not pgie.link(nvosd):
-        raise RuntimeError("Failed to link pgie -> nvosd")
+    if not pgie.link(queue_pgie):
+        raise RuntimeError("Failed to link pgie -> queue_pgie")
+    if not queue_pgie.link(nvosd):
+        raise RuntimeError("Failed to link queue_pgie -> nvosd")
     if not nvosd.link(nvvidconv):
         raise RuntimeError("Failed to link nvosd -> nvvideoconvert")
     if not nvvidconv.link(capsfilter):
