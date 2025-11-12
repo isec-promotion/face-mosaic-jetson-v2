@@ -16,7 +16,7 @@ gie-unique-id=1
 output-blob-names=output0
 maintain-aspect-ratio=1
 infer-dims=3;640;640
-output-tensor-meta=1
+output-tensor-meta=0
 
 # YOLOv8カスタムパーサーを使用
 custom-lib-path=libnvdsinfer_custom_impl_yolo.so
@@ -24,5 +24,5 @@ parse-bbox-func-name=NvDsInferParseCustomYoloV8
 
 [class-attrs-all]
 nms-iou-threshold=0.45
-pre-cluster-threshold=0.20
+pre-cluster-threshold=0.25
 topk=300
