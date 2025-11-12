@@ -10,15 +10,15 @@ num-detected-classes=1
 batch-size=1
 process-mode=1
 network-type=0
-cluster-mode=4
+cluster-mode=2
 interval=0
 gie-unique-id=1
 output-blob-names=output0
 maintain-aspect-ratio=1
+infer-dims=3;640;640
 
-# カスタムパーサーライブラリを使用
-custom-lib-path=/opt/nvidia/deepstream/deepstream-7.1/lib/libnvds_infercustomparser.so
-parse-bbox-func-name=NvDsInferParseCustomNMSTLT
+# YOLOv8はカスタムパーサーなしで動作させる
+# cluster-mode=2でNMSを使用
 
 [class-attrs-all]
 nms-iou-threshold=0.45
