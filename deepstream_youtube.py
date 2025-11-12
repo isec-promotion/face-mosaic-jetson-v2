@@ -189,9 +189,9 @@ def bus_call(bus, message, loop):
 def validate_files(args: argparse.Namespace) -> None:
     infer_config = Path(args.infer_config)
     if not infer_config.is_file():
-        raise FileNotFoundError(
-            f"Infer config not found: {infer_config.resolve()}"
-        )
+        raise FileNotFoundError(f"Infer config not found: {infer_config.resolve()}")
+    LOG.info("Using nvinfer config: %s", infer_config.resolve())
+
 
 
 def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
@@ -256,18 +256,22 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     ):
         pipeline.add(elem)
 
-    if not Gst.Element.link_many(
-        streammux,
-        pgie,
-        nvosd,
-        nvvidconv,
-        capsfilter,
-        encoder,
-        h264parser,
-        flvmux,
-        sink,
-    ):
-        raise RuntimeError("Failed to link elements")
+    if not streammux.link(pgie):
+        raise RuntimeError("Failed to link streammux -> pgie")
+    if not pgie.link(nvosd):
+        raise RuntimeError("Failed to link pgie -> nvosd")
+    if not nvosd.link(nvvidconv):
+        raise RuntimeError("Failed to link nvosd -> nvvideoconvert")
+    if not nvvidconv.link(capsfilter):
+        raise RuntimeError("Failed to link nvvideoconvert -> capsfilter")
+    if not capsfilter.link(encoder):
+        raise RuntimeError("Failed to link capsfilter -> encoder")
+    if not encoder.link(h264parser):
+        raise RuntimeError("Failed to link encoder -> h264parse")
+    if not h264parser.link(flvmux):
+        raise RuntimeError("Failed to link h264parse -> flvmux")
+    if not flvmux.link(sink):
+        raise RuntimeError("Failed to link flvmux -> rtmpsink")
 
     osd_sink_pad = nvosd.get_static_pad("sink")
     if not osd_sink_pad:
