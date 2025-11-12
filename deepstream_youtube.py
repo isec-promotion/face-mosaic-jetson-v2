@@ -188,7 +188,14 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
 
     pgie = make_element("nvinfer", "primary-inference", config_file_path=args.infer_config)
 
-    nvosd = make_element("nvdsosd", "on-screen-display", process_mode=1, display_text=0)
+    nvosd = make_element(
+        "nvdsosd",
+        "on-screen-display",
+        process_mode=1,
+        display_text=0,
+        display_bbox=1,
+        display_mask=0,
+    )
 
     nvvidconv = make_element("nvvideoconvert", "nv-video-converter")
     capsfilter = make_element(
