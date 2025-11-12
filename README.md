@@ -108,6 +108,21 @@ ls -lh /opt/nvidia/deepstream/deepstream-7.1/lib/libnvds_infercustomparser.so
 
 ## 実行手順
 
+### テストプログラム（顔検出なし）
+
+まず、シンプルな RTSP→YouTube 配信プログラムで基本的な動作を確認してください：
+
+```bash
+python3 simple_rtsp_youtube.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    "YOUR-YOUTUBE-STREAM-KEY"
+```
+
+このプログラムは顔検出や DeepStream の nvstreammux を使わず、最小構成で動作します。
+まずこちらで配信が成功することを確認してから、本番の顔モザイクプログラムに進んでください。
+
+### 本番プログラム（顔モザイク付き）
+
 ```bash
 python3 deepstream_youtube.py \
     "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
