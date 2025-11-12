@@ -76,7 +76,25 @@ python3 scripts/convert_yolo_to_onnx.py
 
 変換が成功すると、`models/yolov8n-face.onnx`が生成されます。
 
-### 3. TensorRT エンジンの生成
+### 3. DeepStream カスタムパーサーライブラリのビルド
+
+DeepStream 7.1 では、カスタムパーサーライブラリを手動でビルドする必要があります：
+
+```bash
+# カスタムパーサーディレクトリに移動
+cd /opt/nvidia/deepstream/deepstream-7.1/sources/libs/nvdsinfer_customparser/
+
+# ビルド（CUDA_VERはnvcc --versionで確認したバージョンを指定）
+sudo CUDA_VER=12.6 make
+
+# libディレクトリにインストール
+sudo make install
+
+# インストールを確認
+ls -lh /opt/nvidia/deepstream/deepstream-7.1/lib/libnvds_infercustomparser.so
+```
+
+### 4. TensorRT エンジンの生成
 
 初回実行時に、ONNX ファイルから自動的に TensorRT エンジン(.engine)が生成されます。
 この処理には数分かかる場合がありますが、2 回目以降は既存の engine ファイルが使用されます。
