@@ -17,8 +17,9 @@ output-blob-names=output0
 maintain-aspect-ratio=1
 infer-dims=3;640;640
 
-# YOLOv8はカスタムパーサーなしで動作させる
-# cluster-mode=2でNMSを使用
+# YOLOv8カスタムパーサーを使用
+custom-lib-path=libnvdsinfer_custom_impl_yolo.so
+parse-bbox-func-name=NvDsInferParseCustomYoloV8
 
 [class-attrs-all]
 nms-iou-threshold=0.45
