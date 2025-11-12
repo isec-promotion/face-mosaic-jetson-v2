@@ -176,7 +176,15 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     # キュー3（エンコーダー後）
     queue3 = make_element("queue", "queue3")
     
-    # FLV muxer（音声なし設定）
+    # ダミー音声ソース（YouTubeは音声ストリームを要求する）
+    audiotestsrc = make_element("audiotestsrc", "audio-source", wave=4)  # wave=4は無音
+    audioconvert = make_element("audioconvert", "audio-convert")
+    audioresample = make_element("audioresample", "audio-resample")
+    voaacenc = make_element("voaacenc", "audio-encoder", bitrate=128000)
+    aacparse = make_element("aacparse", "aac-parser")
+    audio_queue = make_element("queue", "audio-queue")
+    
+    # FLV muxer
     flvmux = make_element("flvmux", "flv-muxer", streamable=True)
     
     # RTMP sink（YouTube）
@@ -184,11 +192,12 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         "rtmpsink",
         "youtube-sink",
         location=args.youtube_url,
-        sync=False,
     )
     
     # パイプラインに要素を追加
-    for elem in (source, nvvidconv, queue1, capsfilter, queue2, encoder, h264parser, queue3, flvmux, sink):
+    for elem in (source, nvvidconv, queue1, capsfilter, queue2, encoder, h264parser, queue3,
+                 audiotestsrc, audioconvert, audioresample, voaacenc, aacparse, audio_queue,
+                 flvmux, sink):
         pipeline.add(elem)
     
     # 要素をリンク（sourceは動的にリンク）
@@ -204,8 +213,31 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         raise RuntimeError("encoder -> h264parse のリンクに失敗")
     if not h264parser.link(queue3):
         raise RuntimeError("h264parse -> queue3 のリンクに失敗")
-    if not queue3.link(flvmux):
-        raise RuntimeError("queue3 -> flvmux のリンクに失敗")
+    # ビデオストリームをflvmuxに接続
+    video_pad = flvmux.get_request_pad("video")
+    queue3_src = queue3.get_static_pad("src")
+    if queue3_src.link(video_pad) != Gst.PadLinkReturn.OK:
+        raise RuntimeError("queue3 -> flvmux (video) のリンクに失敗")
+    
+    # 音声ストリームをリンク
+    if not audiotestsrc.link(audioconvert):
+        raise RuntimeError("audiotestsrc -> audioconvert のリンクに失敗")
+    if not audioconvert.link(audioresample):
+        raise RuntimeError("audioconvert -> audioresample のリンクに失敗")
+    if not audioresample.link(voaacenc):
+        raise RuntimeError("audioresample -> voaacenc のリンクに失敗")
+    if not voaacenc.link(aacparse):
+        raise RuntimeError("voaacenc -> aacparse のリンクに失敗")
+    if not aacparse.link(audio_queue):
+        raise RuntimeError("aacparse -> audio_queue のリンクに失敗")
+    
+    # 音声ストリームをflvmuxに接続
+    audio_pad = flvmux.get_request_pad("audio")
+    audio_queue_src = audio_queue.get_static_pad("src")
+    if audio_queue_src.link(audio_pad) != Gst.PadLinkReturn.OK:
+        raise RuntimeError("audio_queue -> flvmux (audio) のリンクに失敗")
+    
+    # flvmuxからrtmpsinkへ
     if not flvmux.link(sink):
         raise RuntimeError("flvmux -> rtmpsink のリンクに失敗")
     
