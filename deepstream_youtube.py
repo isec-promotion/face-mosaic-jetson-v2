@@ -147,7 +147,13 @@ def osd_sink_pad_buffer_probe(pad, info, _u_data):
         LOG.warning("Unable to get GstBuffer")
         return Gst.PadProbeReturn.OK
 
-    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+    # DeepStream 7.1 compatible API
+    try:
+        batch_meta = pyds.gst_buffer_get_nvds_batch_meta(gst_buffer)
+    except Exception:
+        # Fallback for older API
+        batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+    
     if not batch_meta:
         return Gst.PadProbeReturn.OK
 
