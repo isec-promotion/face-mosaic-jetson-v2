@@ -173,7 +173,10 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     # H.264 パーサー
     h264parser = make_element("h264parse", "h264-parser")
     
-    # FLV muxer
+    # キュー3（エンコーダー後）
+    queue3 = make_element("queue", "queue3")
+    
+    # FLV muxer（音声なし設定）
     flvmux = make_element("flvmux", "flv-muxer", streamable=True)
     
     # RTMP sink（YouTube）
@@ -185,7 +188,7 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     )
     
     # パイプラインに要素を追加
-    for elem in (source, nvvidconv, queue1, capsfilter, queue2, encoder, h264parser, flvmux, sink):
+    for elem in (source, nvvidconv, queue1, capsfilter, queue2, encoder, h264parser, queue3, flvmux, sink):
         pipeline.add(elem)
     
     # 要素をリンク（sourceは動的にリンク）
@@ -199,8 +202,10 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         raise RuntimeError("queue2 -> encoder のリンクに失敗")
     if not encoder.link(h264parser):
         raise RuntimeError("encoder -> h264parse のリンクに失敗")
-    if not h264parser.link(flvmux):
-        raise RuntimeError("h264parse -> flvmux のリンクに失敗")
+    if not h264parser.link(queue3):
+        raise RuntimeError("h264parse -> queue3 のリンクに失敗")
+    if not queue3.link(flvmux):
+        raise RuntimeError("queue3 -> flvmux のリンクに失敗")
     if not flvmux.link(sink):
         raise RuntimeError("flvmux -> rtmpsink のリンクに失敗")
     
