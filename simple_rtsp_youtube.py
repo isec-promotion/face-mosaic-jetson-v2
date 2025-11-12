@@ -113,7 +113,7 @@ def on_pad_added(decodebin, pad, target_element):
                 LOG.error(f"パッドのリンクに失敗: {ret}")
 
 
-def bus_call(bus, message, loop):
+def bus_call(bus, message, loop, pipeline):
     msg_type = message.type
     if msg_type == Gst.MessageType.EOS:
         LOG.info("ストリーム終了")
@@ -126,7 +126,7 @@ def bus_call(bus, message, loop):
         warn, debug = message.parse_warning()
         LOG.warning(f"警告: {warn} ({debug})")
     elif msg_type == Gst.MessageType.STATE_CHANGED:
-        if message.src == bus.get_object():
+        if message.src == pipeline:
             old, new, pending = message.parse_state_changed()
             LOG.info(f"パイプライン状態変化: {old.value_nick} -> {new.value_nick}")
     return True
@@ -147,14 +147,8 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     # ビデオ変換（NVMM対応）
     nvvidconv = make_element("nvvideoconvert", "nv-video-converter")
     
-    # フォーマット指定
-    caps_str = (
-        f"video/x-raw(memory:NVMM), "
-        f"width={args.width}, "
-        f"height={args.height}, "
-        f"format=I420, "
-        f"framerate={args.fps}/1"
-    )
+    # フォーマット指定（より柔軟に）
+    caps_str = f"video/x-raw(memory:NVMM), width={args.width}, height={args.height}, framerate={args.fps}/1"
     capsfilter = make_element(
         "capsfilter",
         "caps-filter",
@@ -217,7 +211,7 @@ def main() -> int:
     loop = GLib.MainLoop()
     bus = pipeline.get_bus()
     bus.add_signal_watch()
-    bus.connect("message", bus_call, loop)
+    bus.connect("message", bus_call, loop, pipeline)
     
     def handle_sigint(signum, frame):
         LOG.info(f"シグナル {signum} を受信、停止中...")
