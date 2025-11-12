@@ -28,10 +28,10 @@ from gi.repository import Gst, GLib  # noqa: E402
 
 LOG = logging.getLogger("deepstream-face-streamer")
 
-DEFAULT_WIDTH = 1280
-DEFAULT_HEIGHT = 720
+DEFAULT_WIDTH = 1920
+DEFAULT_HEIGHT = 1080
 DEFAULT_FPS = 30
-DEFAULT_BITRATE = 2_500_000  # 2.5 Mbps相当
+DEFAULT_BITRATE = 6_000_000  # 6 Mbps (1080p推奨)
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,13 +59,13 @@ def parse_args() -> argparse.Namespace:
         "--width",
         type=int,
         default=DEFAULT_WIDTH,
-        help=f"Output width in pixels (default: {DEFAULT_WIDTH})",
+        help=f"Output width in pixels (default: {DEFAULT_WIDTH}, use 1280 for 720p)",
     )
     parser.add_argument(
         "--height",
         type=int,
         default=DEFAULT_HEIGHT,
-        help=f"Output height in pixels (default: {DEFAULT_HEIGHT})",
+        help=f"Output height in pixels (default: {DEFAULT_HEIGHT}, use 720 for 720p)",
     )
     parser.add_argument(
         "--fps",
@@ -77,12 +77,12 @@ def parse_args() -> argparse.Namespace:
         "--bitrate",
         type=int,
         default=DEFAULT_BITRATE,
-        help=f"H.264 encoder bitrate (default: {DEFAULT_BITRATE})",
+        help=f"H.264 encoder bitrate (default: {DEFAULT_BITRATE}, use 2500000 for 720p)",
     )
     parser.add_argument(
         "--youtube-ingest",
-        default="rtmps://a.rtmps.youtube.com:443/live2",
-        help="YouTube RTMPS ingest endpoint (default: %(default)s)",
+        default="rtmp://a.rtmp.youtube.com/live2",
+        help="YouTube RTMP ingest endpoint (default: %(default)s)",
     )
     parser.add_argument(
         "--log-level",
@@ -136,8 +136,12 @@ def on_decodebin_pad_added(decodebin, pad, data):
 def decodebin_child_added(child_proxy, object, name):
     """利用可能な場合にハードウェアデコード経路を強制する。"""
     LOG.debug("decodebin child added: %s (%s)", name, object.__gtype__.name)
-    if name.startswith("decodebin") or name.startswith("nvv4l2decoder"):
-        object.set_property("drop-on-late", True)
+    # drop-on-lateプロパティは一部の要素にのみ存在するため、エラーを無視
+    try:
+        if name.startswith("decodebin") or name.startswith("nvv4l2decoder"):
+            object.set_property("drop-on-late", True)
+    except:
+        pass
 
 
 def osd_sink_pad_buffer_probe(pad, info, _u_data):
@@ -211,19 +215,26 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         "hw-encoder",
         bitrate=args.bitrate,
         control_rate=1,
-        iframeinterval=args.fps * 2,
+        iframeinterval=30,  # 1秒間隔（YouTubeは2秒以下を推奨）
         preset_level=1,
         insert_sps_pps=True,
         maxperf_enable=True,
         EnableTwopassCBR=False,
+        profile=0,  # Baseline Profile
     )
     h264parser = make_element("h264parse", "h264-parser")
+    queue_video = make_element("queue", "queue-video")
+    
+    # ダミー音声ソース（YouTubeは音声ストリームを要求する）
+    audiotestsrc = make_element("audiotestsrc", "audio-source", wave=4)  # wave=4は無音
+    audioconvert = make_element("audioconvert", "audio-convert")
+    audioresample = make_element("audioresample", "audio-resample")
+    voaacenc = make_element("voaacenc", "audio-encoder", bitrate=128000)
+    aacparse = make_element("aacparse", "aac-parser")
+    queue_audio = make_element("queue", "queue-audio")
+    
     flvmux = make_element("flvmux", "flv-muxer", streamable=True)
-    sink = make_element("rtmpsink", "youtube-sink", **{
-        "location": args.youtube_url,
-        "sync": False,
-        "async": False,
-    })
+    sink = make_element("rtmpsink", "youtube-sink", location=args.youtube_url, sync=False)
 
     for elem in (
         source,
@@ -234,11 +245,19 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         capsfilter,
         encoder,
         h264parser,
+        queue_video,
+        audiotestsrc,
+        audioconvert,
+        audioresample,
+        voaacenc,
+        aacparse,
+        queue_audio,
         flvmux,
         sink,
     ):
         pipeline.add(elem)
 
+    # ビデオパイプラインをリンク
     if not streammux.link(pgie):
         raise RuntimeError("Failed to link streammux -> pgie")
     if not pgie.link(nvosd):
@@ -251,8 +270,34 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         raise RuntimeError("Failed to link capsfilter -> encoder")
     if not encoder.link(h264parser):
         raise RuntimeError("Failed to link encoder -> h264parse")
-    if not h264parser.link(flvmux):
-        raise RuntimeError("Failed to link h264parse -> flvmux")
+    if not h264parser.link(queue_video):
+        raise RuntimeError("Failed to link h264parse -> queue_video")
+    
+    # ビデオストリームをflvmuxに接続
+    video_pad = flvmux.get_request_pad("video")
+    queue_video_src = queue_video.get_static_pad("src")
+    if queue_video_src.link(video_pad) != Gst.PadLinkReturn.OK:
+        raise RuntimeError("Failed to link queue_video -> flvmux (video)")
+    
+    # 音声パイプラインをリンク
+    if not audiotestsrc.link(audioconvert):
+        raise RuntimeError("Failed to link audiotestsrc -> audioconvert")
+    if not audioconvert.link(audioresample):
+        raise RuntimeError("Failed to link audioconvert -> audioresample")
+    if not audioresample.link(voaacenc):
+        raise RuntimeError("Failed to link audioresample -> voaacenc")
+    if not voaacenc.link(aacparse):
+        raise RuntimeError("Failed to link voaacenc -> aacparse")
+    if not aacparse.link(queue_audio):
+        raise RuntimeError("Failed to link aacparse -> queue_audio")
+    
+    # 音声ストリームをflvmuxに接続
+    audio_pad = flvmux.get_request_pad("audio")
+    queue_audio_src = queue_audio.get_static_pad("src")
+    if queue_audio_src.link(audio_pad) != Gst.PadLinkReturn.OK:
+        raise RuntimeError("Failed to link queue_audio -> flvmux (audio)")
+    
+    # flvmuxからrtmpsinkへ
     if not flvmux.link(sink):
         raise RuntimeError("Failed to link flvmux -> rtmpsink")
 

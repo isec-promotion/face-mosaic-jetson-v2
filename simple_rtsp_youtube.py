@@ -18,10 +18,10 @@ from gi.repository import Gst, GLib
 
 LOG = logging.getLogger("simple-rtsp-youtube")
 
-DEFAULT_WIDTH = 1280
-DEFAULT_HEIGHT = 720
+DEFAULT_WIDTH = 1920
+DEFAULT_HEIGHT = 1080
 DEFAULT_FPS = 30
-DEFAULT_BITRATE = 2_500_000  # 2.5 Mbps
+DEFAULT_BITRATE = 6_000_000  # 6 Mbps (1080p推奨)
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,13 +40,13 @@ def parse_args() -> argparse.Namespace:
         "--width",
         type=int,
         default=DEFAULT_WIDTH,
-        help=f"出力幅 (デフォルト: {DEFAULT_WIDTH})",
+        help=f"出力幅 (デフォルト: {DEFAULT_WIDTH}, 720pの場合は1280を指定)",
     )
     parser.add_argument(
         "--height",
         type=int,
         default=DEFAULT_HEIGHT,
-        help=f"出力高さ (デフォルト: {DEFAULT_HEIGHT})",
+        help=f"出力高さ (デフォルト: {DEFAULT_HEIGHT}, 720pの場合は720を指定)",
     )
     parser.add_argument(
         "--fps",
@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
         "--bitrate",
         type=int,
         default=DEFAULT_BITRATE,
-        help=f"H.264エンコーダービットレート (デフォルト: {DEFAULT_BITRATE})",
+        help=f"H.264エンコーダービットレート (デフォルト: {DEFAULT_BITRATE}, 720pの場合は2500000を推奨)",
     )
     parser.add_argument(
         "--youtube-ingest",
@@ -162,12 +162,14 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     queue2 = make_element("queue", "queue2")
     
     # H.264 エンコーダー（Jetson HWエンコーダー）
+    # iframeinterval: YouTubeは2秒以下を推奨（30fps * 2 = 60フレーム = 2秒）
     encoder = make_element(
         "nvv4l2h264enc",
         "hw-encoder",
         bitrate=args.bitrate,
         insert_sps_pps=True,
-        iframeinterval=args.fps * 2,
+        iframeinterval=30,  # 1秒間隔（より安全な設定）
+        profile=0,  # Baseline Profile
     )
     
     # H.264 パーサー

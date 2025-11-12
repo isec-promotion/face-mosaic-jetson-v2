@@ -121,20 +121,33 @@ python3 simple_rtsp_youtube.py \
 このプログラムは顔検出や DeepStream の nvstreammux を使わず、最小構成で動作します。
 まずこちらで配信が成功することを確認してから、本番の顔モザイクプログラムに進んでください。
 
+**重要なポイント**:
+
+- YouTube Live への配信には音声ストリームが必須です
+- このプログラムはダミー音声（無音）を自動的に追加します
+- 配信開始後、YouTube Studio で映像が表示されるまで 10-30 秒かかる場合があります
+
 ### 本番プログラム（顔モザイク付き）
 
 ```bash
+# デフォルト（1080p @ 6Mbps）
 python3 deepstream_youtube.py \
     "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
     "YOUR-YOUTUBE-STREAM-KEY"
+
+# 720pで配信する場合
+python3 deepstream_youtube.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    "YOUR-YOUTUBE-STREAM-KEY" \
+    --width 1280 --height 720 --bitrate 2500000
 ```
 
 主なオプション:
 
 - `--infer-config`: 別の`nvinfer`設定ファイルを使用。
-- `--width/--height/--fps`: 中継解像度やフレームレートを上書き（既定 1280x720@30）。
-- `--bitrate`: HW エンコーダのビットレート（既定 2.5 Mbps CBR）。
-- `--youtube-ingest`: YouTube の RTMPS エンドポイントを変更（既定`rtmps://a.rtmps.youtube.com:443/live2`）。
+- `--width/--height/--fps`: 中継解像度やフレームレートを上書き（既定 1920x1080@30、720p の場合は`--width 1280 --height 720`を指定）。
+- `--bitrate`: HW エンコーダのビットレート（既定 6 Mbps、720p の場合は 2500000 を推奨）。
+- `--youtube-ingest`: YouTube の RTMP エンドポイントを変更（既定`rtmp://a.rtmp.youtube.com/live2`）。
 
 ### 想定されるログ
 
