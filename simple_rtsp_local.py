@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 RTSP → 顔モザイク（GPU / DeepStream）→ 画面表示（ローカル確認用）
 - NVIDIA Jetson / DeepStream 要素のみ
@@ -12,8 +10,21 @@ python3 simple_rtsp_local.py \
   --width 1920 --height 1080 --fps 30
 
 gst-inspect-1.0 dsexample | sed -n '/Properties:/,/Pad Templates:/p'
+
+まず UDP で失敗する場合は --tcp を付けて試す：
+python3 simple_rtsp_local.py "rtsp://..." --infer-config ./config_infer_primary_facedet.txt --tcp
+
+詳細ログ を見たいとき：
+GST_DEBUG=3,rtsp*:5,rtspsrc:5,nvv4l2decoder:5,nvstreammux:5,nvinfer:5,dsexample:5 python3 simple_rtsp_local.py "rtsp://..." --infer-config ./config_infer_primary_facedet.txt --tcp --log-level DEBUG
+
+画面シンクの問題が疑わしいときは一時的に変更：
+... && sed -i 's/nveglglessink/autovideosink/' simple_rtsp_local.py
+
 """
 
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import argparse
 import logging
 import signal
@@ -31,15 +42,21 @@ DEFAULT_HEIGHT = 1080
 DEFAULT_FPS = 30
 
 def parse_args():
-    p = argparse.ArgumentParser(description="RTSP→顔モザイク→ローカル表示（DeepStream）")
-    p.add_argument("rtsp_url", help="rtsp://user:pass@ip:554/Streaming/Channels/101 等")
+    p = argparse.ArgumentParser(description="RTSP→顔匿名化(blur)→ローカル表示（DeepStream安定版）")
+    p.add_argument("rtsp_url", help="rtsp://user:pass@ip:554/Streaming/channels/101 等")
     p.add_argument("--infer-config", default="./config_infer_primary_facedet.txt",
-                   help="nvinfer の設定ファイル")
-    p.add_argument("--mosaic-level", type=int, default=6,  # 予備：将来拡張用（未使用）
-                   help="（一部の dsexample でモザイク粒度を変えられる場合に使用）")
+                   help="nvinfer の設定ファイル（顔検出エンジン）")
     p.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     p.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     p.add_argument("--fps", type=int, default=DEFAULT_FPS)
+    p.add_argument("--proc-w", type=int, default=320,
+                   help="dsexample.processing-width（小さいほど荒く→疑似モザイク感）")
+    p.add_argument("--proc-h", type=int, default=180,
+                   help="dsexample.processing-height")
+    p.add_argument("--latency", type=int, default=200,
+                   help="rtspsrc の latency(ms)")
+    p.add_argument("--tcp", action="store_true",
+                   help="RTSPをTCPで受ける（デフォルトはUDP）")
     p.add_argument("--log-level", default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p.parse_args()
@@ -56,41 +73,22 @@ def make(factory: str, name: str, **props) -> Gst.Element:
         e.set_property(k, v)
     return e
 
-def on_pad_added_decodebin(decodebin, pad, data):
-    """
-    decodebin -> (nvvideoconvert_pre -> caps_pre) -> nvstreammux.sink_0
-    """
+def link_dynamic_pad_rtspsrc(rtspsrc, pad, depay):
+    """rtspsrcの動的src-padをrtp depayへ接続（H.264のみ想定）"""
     caps = pad.get_current_caps()
     if not caps:
         return
-    name = caps.get_structure(0).get_name()
-    if not name.startswith("video/"):
-        return
-
-    nvvidconv_pre: Gst.Element = data["nvvidconv_pre"]
-    caps_pre: Gst.Element = data["caps_pre"]
-    streammux: Gst.Element = data["streammux"]
-
-    # decodebin → nvvideoconvert(pre)
-    sinkpad_conv = nvvidconv_pre.get_static_pad("sink")
-    if sinkpad_conv and not sinkpad_conv.is_linked():
-        if pad.link(sinkpad_conv) != Gst.PadLinkReturn.OK:
-            LOG.error("decodebin → nvvideoconvert(pre) のリンク失敗")
-            return
-        LOG.info("decodebin → nvvideoconvert(pre) 接続")
-
-    # caps_pre → streammux.sink_0
-    srcpad_caps = caps_pre.get_static_pad("src")
-    sinkpad_mux = streammux.get_request_pad("sink_0")
-    if not sinkpad_mux:
-        LOG.error("nvstreammux sink_0 取得失敗")
-        return
-    if srcpad_caps.is_linked():
-        return
-    if srcpad_caps.link(sinkpad_mux) != Gst.PadLinkReturn.OK:
-        LOG.error("caps_pre → nvstreammux.sink_0 のリンク失敗")
-    else:
-        LOG.info("caps_pre → nvstreammux.sink_0 接続")
+    s = caps.get_structure(0)
+    name = s.get_name()  # 例: application/x-rtp
+    if name.startswith("application/x-rtp"):
+        # H.264 のみ受ける（H.265なら rtph265depay に変えてください）
+        if s.has_field("encoding-name") and s.get_value("encoding-name") == "H264":
+            sinkpad = depay.get_static_pad("sink")
+            if not sinkpad.is_linked():
+                if pad.link(sinkpad) == Gst.PadLinkReturn.OK:
+                    LOG.info("rtspsrc → rtph264depay を接続しました")
+                else:
+                    LOG.error("rtspsrc → rtph264depay のリンクに失敗")
 
 def bus_call(bus, message, loop, pipeline):
     t = message.type
@@ -111,71 +109,89 @@ def bus_call(bus, message, loop, pipeline):
 
 def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     """
-    uridecodebin
-      -> nvvideoconvert(pre)
-      -> caps(memory:NVMM,NV12)
-      -> nvstreammux(batch=1)
-      -> nvinfer(顔)
-      -> dsexample(検出枠をモザイク/ブラー)
-      -> nvvideoconvert
-      -> nvegltransform
-      -> nveglglessink
+    rtspsrc (latency/プロトコル指定)
+      → rtph264depay → h264parse → nvv4l2decoder
+      → nvvideoconvert(pre) → caps(memory:NVMM,NV12)
+      → nvstreammux(batch=1,width/height/live)
+      → nvinfer(primary=face)
+      → dsexample(full-frame=false, blur-objects=true,
+                  processing-width/height=小さめ=疑似モザイク)
+      → nvvideoconvert → nvegltransform → nveglglessink
     """
-    pipe = Gst.Pipeline.new("rtsp-face-mosaic-local")
+    pipe = Gst.Pipeline.new("rtsp-face-anon-local")
     if not pipe:
         raise RuntimeError("Pipeline 作成失敗")
 
-    # Source
-    source = make("uridecodebin", "rtsp-source", uri=args.rtsp_url)
+    # RTSP source
+    protocols = 0x00000001 if args.tcp else 0x00000006  # TCP=1, UDP=6(UDP+UDP-mcast)
+    src = make("rtspsrc", "src",
+               location=args.rtsp_url,
+               latency=args.latency,
+               protocols=protocols,
+               drop_on_latency=True)
 
-    # pre: CPU→NVMM 変換
+    depay = make("rtph264depay", "depay")
+    parse = make("h264parse", "h264parse")
+    decoder = make("nvv4l2decoder", "decoder")
+
+    # CPU→NVMM 変換（念のため前段）
     nvvidconv_pre = make("nvvideoconvert", "nvvidconv-pre")
     caps_pre = make("capsfilter", "caps-pre",
                     caps=Gst.Caps.from_string("video/x-raw(memory:NVMM), format=NV12"))
 
     # DeepStream core
-    streammux = make("nvstreammux", "stream-muxer",
-                     batch_size=1,
-                     width=args.width,
-                     height=args.height,
-                     live_source=True,
-                     buffer_pool_size=8)
-    pgie = make("nvinfer", "primary-fd",
+    mux = make("nvstreammux", "mux",
+               batch_size=1,
+               width=args.width,
+               height=args.height,
+               live_source=True,
+               buffer_pool_size=8)
+
+    pgie = make("nvinfer", "pgie",
                 config_file_path=args.infer_config,
                 unique_id=1)
 
-    # dsexample（確実に存在するプロパティのみ設定）
-    dsex = make("dsexample", "mosaic")
-    dsex.set_property("full-frame", 0)     # 0: オブジェクト領域のみ処理
-    dsex.set_property("blur-objects", 1)   # 1: 検出枠をモザイク/ブラー（実装依存）
+    # dsexample（blurのみ利用可能）
+    dsex = make("dsexample", "dsex")
+    dsex.set_property("full-frame", False)     # 検出枠のみ処理
+    dsex.set_property("blur-objects", True)    # ぼかし有効化
+    dsex.set_property("processing-width",  args.proc_w)
+    dsex.set_property("processing-height", args.proc_h)
+    # ↑ processing解像度を下げると“荒いぼかし”=擬似モザイク感が強まります
 
-    # 表示系
     nvvidconv = make("nvvideoconvert", "nvvidconv")
     nveglxform = make("nvegltransform", "nveglxform")
-    sink = make("nveglglessink", "display", sync=False)
+    sink = make("nveglglessink", "sink", sync=False)
 
-    for e in (source, nvvidconv_pre, caps_pre,
-              streammux, pgie, dsex, nvvidconv, nveglxform, sink):
+    for e in (src, depay, parse, decoder,
+              nvvidconv_pre, caps_pre, mux,
+              pgie, dsex, nvvidconv, nveglxform, sink):
         pipe.add(e)
 
-    # 動的リンク: decodebin → (pre) → streammux
-    source.connect("pad-added", on_pad_added_decodebin, {
-        "nvvidconv_pre": nvvidconv_pre,
-        "caps_pre": caps_pre,
-        "streammux": streammux
-    })
+    # rtspsrc は動的 pad
+    src.connect("pad-added", link_dynamic_pad_rtspsrc, depay)
 
-    # 静的リンク（pre）
+    # 静的リンク（RTP→HWデコード）
+    assert depay.link(parse)
+    assert parse.link(decoder)
+    assert decoder.link(nvvidconv_pre)
     assert nvvidconv_pre.link(caps_pre)
 
-    # DS line
-    assert streammux.link(pgie)
+    # caps_pre(src) → mux.sink_0（request pad）
+    sinkpad_mux = mux.get_request_pad("sink_0")
+    if not sinkpad_mux:
+        raise RuntimeError("nvstreammux sink_0 取得失敗")
+    if caps_pre.get_static_pad("src").link(sinkpad_mux) != Gst.PadLinkReturn.OK:
+        raise RuntimeError("caps_pre → nvstreammux.sink_0 リンク失敗")
+
+    # DeepStream ライン
+    assert mux.link(pgie)
     assert pgie.link(dsex)
     assert dsex.link(nvvidconv)
     assert nvvidconv.link(nveglxform)
     assert nveglxform.link(sink)
 
-    LOG.info("パイプライン構築完了（ローカル表示・顔モザイク / 汎用プロパティ）")
+    LOG.info("パイプライン構築完了（RTSP明示・ローカル表示）")
     return pipe
 
 def main() -> int:
