@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-RTSP → nvurisrcbin(HWデコード) → nvstreammux → nvinfer(顔検出) → 黒塗り → ローカル表示
-- DeepStream 標準要素のみ（OpenCV不要）
-- 「黒塗り」は nvdsosd の前段 pad-probe で bbox を塗りつぶし
-- H.264/H.265 を自動判別（nvurisrcbin）
-例:
-python3 simple_rtsp_local_blackout.py \
-  "rtsp://user:pass@IP:554/Streaming/Channels/101" \
-  --infer-config ./config_infer_primary_face_yolo11.txt \
-  --width 1920 --height 1080 --fps 30 --tcp --log-level INFO
+RTSP → nvurisrcbin(HWデコード/動的pad) → queue → nvvideoconvert
+    → capsfilter(NV12@NVMM) → nvstreammux → nvinfer(顔検出)
+    → nvvideoconvert → capsfilter(RGBA@NVMM) → nvdsosd(黒塗りprobe)
+    → nvvideoconvert → nvegltransform → nveglglessink(ローカル表示)
+
+- q キーで終了（GLib IO watch / 非同期1文字読み）
+- pyds の BatchMeta 取得API差異に互換対応
 """
 import argparse
 import logging
@@ -74,14 +72,35 @@ def bus_call(bus, message, loop, pipeline):
         LOG.info(f"Pipeline: {old.value_nick} -> {new.value_nick}")
     return True
 
+# --- DeepStream Pythonバインディング差異に対応した BatchMeta 取得 ---
+def get_batch_meta(gst_buffer):
+    """
+    DSのバージョンで pyds API 名称が違うため互換取得を試みる。
+    優先: batch_meta_from_buffer(gst_buffer)
+    次点: gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+    どちらも無ければ None
+    """
+    # 1) 新しめ
+    try:
+        return pyds.batch_meta_from_buffer(gst_buffer)
+    except AttributeError:
+        pass
+    # 2) 従来
+    try:
+        return pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+    except AttributeError:
+        pass
+    return None
+
 def osd_sink_pad_buffer_probe(pad, info, u_data):
     """nvdsosd の前で、検出BBoxを黒塗りに変更"""
     gst_buffer = info.get_buffer()
     if not gst_buffer:
         return Gst.PadProbeReturn.OK
 
-    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+    batch_meta = get_batch_meta(gst_buffer)
     if not batch_meta:
+        # バインディングの差異/未ロードでも処理継続（描画スキップ）
         return Gst.PadProbeReturn.OK
 
     l_frame = batch_meta.frame_meta_list
@@ -109,20 +128,26 @@ def osd_sink_pad_buffer_probe(pad, info, u_data):
 
     return Gst.PadProbeReturn.OK
 
+# --- 動的パッド連結: nvurisrcbin の src → queue の sink を接続 ---
+def on_src_pad_added(src, pad, target):
+    if pad.get_direction() != Gst.PadDirection.SRC:
+        return
+    sinkpad = target.get_static_pad("sink")
+    if sinkpad.is_linked():
+        return
+    ret = pad.link(sinkpad)
+    if ret == Gst.PadLinkReturn.OK:
+        LOG.info("nvurisrcbin → queue をリンク")
+    else:
+        LOG.error(f"nvurisrcbin → queue のリンク失敗: {ret}")
+
 def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     Gst.init(None)
     pipe = Gst.Pipeline.new("rtsp-face-blackout-local")
     if not pipe:
         raise RuntimeError("Pipeline作成失敗")
 
-    # --- 入力：nvurisrcbin（H.264/H.265自動対応・再接続） ---
-    # 参考プロパティ:
-    #  - uri: RTSP/HTTP(S)など一括指定
-    #  - latency: RTSPジッタバッファ
-    #  - rtsp-reconnect-interval-sec: 切断時の自動再接続間隔
-    #  - enable-udpsrc-buffer-size/udp-buffer-size: 大きめに
-    #  - cudadec-memtype: 0(NVMM)
-    #  - drop-on-latency: Trueで遅延時ドロップ
+    # 入力: nvurisrcbin（H.264/H.265自動対応・再接続あり）
     src = make(
         "nvurisrcbin", "src",
         uri=args.rtsp_url,
@@ -132,60 +157,105 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
         rtsp_reconnect_attempts=-1,
         enable_udpsrc_buffer_size=True,
         udp_buffer_size=1<<20,   # 1MB
-        cudadec_memtype=0
+        cudadec_memtype=0        # NVMM
     )
-    # TCP指定（プロパティが存在する環境のみ反映）
     if args.tcp:
         try:
-            src.set_property("rtsp_transport", 0)  # 0:TCP, 1:UDP (環境により異なる場合あり)
+            src.set_property("rtsp_transport", 0)  # 0: TCP
         except Exception:
             pass
 
-    # 前処理（NVMMでNV12に統一）
+    # 動的パッド対策: 受け側に queue
+    q0 = make("queue", "q0", max_size_buffers=0, max_size_bytes=0, max_size_time=0)
+
+    # NVMMを明示（NV12）→ mux へ
     nvconv_pre = make("nvvideoconvert", "nvconv-pre")
-    caps_pre   = make("capsfilter", "caps-pre",
-                      caps=Gst.Caps.from_string("video/x-raw(memory:NVMM), format=NV12"))
+    caps_pre = make("capsfilter", "caps-pre",
+                    caps=Gst.Caps.from_string("video/x-raw(memory:NVMM), format=NV12"))
 
     mux = make("nvstreammux", "mux",
                batch_size=1, width=args.width, height=args.height,
                live_source=True, buffer_pool_size=8)
 
+    # Primary Inference（顔検出）
     pgie = make("nvinfer", "pgie",
                 config_file_path=args.infer_config, unique_id=1)
 
-    osd = make("nvdsosd", "osd",
-               process_mode=0,   # GPU
-               display_text=0)   # ラベル非表示
+    # OSD は RGBA を好むため、前段で RGBA へ変換
+    nvconv_rgba = make("nvvideoconvert", "nvconv-rgba")
+    caps_rgba = make("capsfilter", "caps-rgba",
+                     caps=Gst.Caps.from_string("video/x-raw(memory:NVMM), format=RGBA"))
 
-    nvconv = make("nvvideoconvert", "nvconv")
-    xform  = make("nvegltransform", "xform")
-    sink   = make("nveglglessink", "sink", sync=False)
+    osd = make("nvdsosd", "osd", process_mode=0, display_text=0)
 
-    for e in (src, nvconv_pre, caps_pre, mux, pgie, osd, nvconv, xform, sink):
+    # 表示系
+    nvconv_post = make("nvvideoconvert", "nvconv-post")
+    xform = make("nvegltransform", "xform")
+    sink = make("nveglglessink", "sink", sync=False)
+
+    for e in (src, q0, nvconv_pre, caps_pre, mux, pgie, nvconv_rgba, caps_rgba, osd, nvconv_post, xform, sink):
         pipe.add(e)
 
-    # nvurisrcbin → nvvideoconvert → caps → nvstreammux.sink_0
-    assert src.link(nvconv_pre)
+    # ★ 動的パッドでリンク
+    src.connect("pad-added", on_src_pad_added, q0)
+
+    # 静的リンク
+    assert q0.link(nvconv_pre)
     assert nvconv_pre.link(caps_pre)
 
-    sinkpad_mux = mux.request_pad_simple("sink_0")
-    if caps_pre.get_static_pad("src").link(sinkpad_mux) != Gst.PadLinkReturn.OK:
-        raise RuntimeError("caps_pre → mux.sink_0 リンク失敗")
+    # mux のリクエストシンク
+    try:
+        sinkpad_mux = mux.request_pad_simple("sink_0")  # DS6.x+
+    except AttributeError:
+        sinkpad_mux = mux.get_request_pad("sink_0")     # 旧API
+    if not sinkpad_mux:
+        raise RuntimeError("mux sink_0 リクエスト失敗")
 
+    if caps_pre.get_static_pad("src").link(sinkpad_mux) != Gst.PadLinkReturn.OK:
+        raise RuntimeError("caps-pre → mux.sink_0 リンク失敗")
+
+    # mux→pgie→RGBA→osd→表示
     assert mux.link(pgie)
-    assert pgie.link(osd)
-    assert osd.link(nvconv)
-    assert nvconv.link(xform)
+    assert pgie.link(nvconv_rgba)
+    assert nvconv_rgba.link(caps_rgba)
+    assert caps_rgba.link(osd)
+    assert osd.link(nvconv_post)
+    assert nvconv_post.link(xform)
     assert xform.link(sink)
 
-    # 黒塗りを OSD の手前に差し込む
+    # 黒塗りを OSD の手前に差し込む（検出矩形を塗りつぶし）
     osd_sink_pad = osd.get_static_pad("sink")
     if not osd_sink_pad:
         raise RuntimeError("nvdsosd sink pad 取得失敗")
     osd_sink_pad.add_probe(Gst.PadProbeType.BUFFER, osd_sink_pad_buffer_probe, 0)
 
-    LOG.info("パイプライン構築完了（nvurisrcbin→黒塗り→ローカル表示）")
+    LOG.info("パイプライン構築完了（nvurisrcbin→黒塗り→ローカル表示, NVMM固定, RGBA化）")
     return pipe
+
+# --- q キーで終了させるための GLib IO watch ---
+def install_quit_key(loop: GLib.MainLoop):
+    """
+    端末で 'q' を押したら loop.quit()。
+    GLib.IOChannel で1文字ノンブロッキング読み取り。
+    """
+    io = GLib.IOChannel.unix_new(sys.stdin.fileno())
+    io.set_encoding(None)  # バイナリ扱い
+    io.set_buffered(False)
+
+    def _on_key(iochan, cond, user_data):
+        try:
+            status, data = iochan.read(1)  # 1文字読む
+        except Exception:
+            return True
+        if status == GLib.IOStatus.NORMAL and data:
+            ch = data.decode(errors="ignore").lower() if isinstance(data, (bytes, bytearray)) else data.lower()
+            if ch == 'q':
+                LOG.info("q キー検出 → 終了します")
+                user_data.quit()
+                return False  # これ以上ウォッチしない
+        return True
+
+    GLib.io_add_watch(io, GLib.IOCondition.IN, _on_key, loop)
 
 def main() -> int:
     args = parse_args()
@@ -197,11 +267,15 @@ def main() -> int:
     bus.add_signal_watch()
     bus.connect("message", bus_call, loop, pipe)
 
+    # Ctrl+C/SIGTERM でも終了
     def handle_sig(signum, frame):
         LOG.info(f"Signal {signum} を受信、停止")
         loop.quit()
     signal.signal(signal.SIGINT, handle_sig)
     signal.signal(signal.SIGTERM, handle_sig)
+
+    # q キーで終了
+    install_quit_key(loop)
 
     try:
         LOG.info("再生開始")

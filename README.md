@@ -1,142 +1,222 @@
-# Jetson Orin NX Super - DeepStream 顔モザイク YouTube リレー
+# Face Mosaic for NVIDIA Jetson with YOLO11
 
-DeepStream と GStreamer を使って RTSP 監視映像を取り込み、GPU 上で顔を検出して塗りつぶしマスクを適用し、ハードウェアエンコードした映像を RTMPS 経由で YouTube Live へ中継する仕組みです。デコードから推論、マスク、エンコードまで NVMM メモリ内で完結するため、Jetson Orin NX Super の性能を無駄なく活用できます。
+NVIDIA Jetson 上で DeepStream と YOLO11 を使用して、RTSP カメラ映像から顔を検出し、プライバシー保護のために顔領域を黒く塗りつぶすプログラムです。
 
-## アーキテクチャ
+## 概要
 
-- **入力**: `uridecodebin`が RTSP を取得し、`nvv4l2decoder`で HW デコード。
-- **推論**: `nvinfer`が NVIDIA 提供の ResNet18 ベース顔検出モデル（TensorRT FP16）を実行。
-- **マスキング**: `nvosd`に仕込んだ`pyds`プローブで顔領域を GPU 上の塗りつぶし矩形に置換（CPU コピーなし）。
-- **出力**: `nvv4l2h264enc`で HW エンコード -> `flvmux` -> `rtmpsink`で YouTube へ送信。
+このプロジェクトは、NVIDIA Jetson デバイスで YOLO11 顔検出モデルを使用し、リアルタイムで顔領域を検出してマスク処理を行います。DeepStream SDK と TensorRT を活用することで、効率的な GPU 処理を実現しています。
 
-```
-RTSP -> uridecodebin -> nvstreammux -> nvinfer -> nvosd(+probe) -> nvvideoconvert
-      -> capsfilter -> nvv4l2h264enc -> h264parse -> flvmux -> rtmpsink (YouTube)
-```
+## 機能
+
+- **RTSP 映像入力**: IP カメラなどの RTSP 映像ソースからの入力に対応
+- **GPU 高速処理**: NVMM（NVIDIA Memory Management）を使用したゼロコピー処理
+- **YOLO11 顔検出**: 最新の YOLO11 モデルによる高精度な顔検出
+- **2 つの動作モード**:
+  - ローカル表示モード: 顔検出結果をローカル画面に表示
+  - YouTube 配信モード: 顔検出処理後の映像を YouTube Live に配信
 
 ## リポジトリ構成
 
-| ファイル/ディレクトリ                 | 役割                                                            |
-| ------------------------------------- | --------------------------------------------------------------- |
-| `deepstream_youtube.py`               | DeepStream パイプラインを組み立てて制御する Python ランチャー。 |
-| `config_infer_primary_facedetect.txt` | YOLOv8 顔検出モデルを使用する`nvinfer`設定ファイル。            |
-| `models/`                             | モデルファイル格納ディレクトリ（.pt、.onnx、.engine など）。    |
-| `models/labels_face.txt`              | 顔検出クラスのラベルファイル。                                  |
-| `scripts/convert_yolo_to_onnx.py`     | PyTorch モデルを ONNX 形式に変換するスクリプト。                |
-| `.gitignore`                          | モデルファイルを Git 管理から除外する設定。                     |
+| ファイル/ディレクトリ                  | 役割                                                       |
+| -------------------------------------- | ---------------------------------------------------------- |
+| `simple_rtsp_local_blackout.py`        | RTSP カメラの映像をローカル画面に表示（顔を黒塗り）        |
+| `simple_rtsp_youtube.py`               | RTSP カメラの映像を YouTube Live に配信（顔検出なし）      |
+| `config_infer_primary_face_yolo11.txt` | YOLO11 顔検出モデルの nvinfer 設定ファイル                 |
+| `models/`                              | モデルファイル格納ディレクトリ（.pt、.onnx、.engine など） |
+| `models/labels_face.txt`               | 顔検出クラスのラベルファイル                               |
 
-## 事前準備
+## システム要件
 
-- Jetson Orin NX Super + JetPack 6.x（CUDA/TensorRT/Multimedia 同梱）
-- DeepStream SDK 7.1 以降（Python バインディング付き）
-- Git、Python 3.8+（JetPack 標準）
-- RTSP カメラと YouTube Live ストリームキー
-- （任意）`screen`や`systemd`など常駐実行環境
+- **ハードウェア**: NVIDIA Jetson Orin NX / Orin Nano / Xavier NX / Nano（JetPack 4.6.4 以降）
+- **ソフトウェア**:
+  - JetPack 6.1（推奨）または JetPack 5.1.3 / 4.6.4
+  - DeepStream SDK 7.1（JetPack 6.1）/ 6.3（JetPack 5.1.3）/ 6.0.1（JetPack 4.6.4）
+  - Python 3.8 以降
+  - CUDA、TensorRT（JetPack に含まれる）
 
-### 依存パッケージのインストール
+## セットアップ
+
+### 1. JetPack と DeepStream SDK のインストール
+
+JetPack のバージョンに応じて、適切な DeepStream SDK をインストールしてください。
 
 ```bash
-# DeepStreamのインストール（未インストールの場合）
+# JetPack 6.1の場合
 sudo apt install deepstream-7.1
 
-# Python依存パッケージ
-pip3 install ultralytics pyds
+# JetPack 5.1.3の場合
+sudo apt install deepstream-6.3
+
+# JetPack 4.6.4の場合
+sudo apt install deepstream-6.0.1
 ```
 
-## モデル準備
+詳細は[NVIDIA DeepStream Getting Started](https://developer.nvidia.com/deepstream-getting-started)を参照してください。
 
-### 1. YOLOv8n-face モデルのダウンロード
+### 2. Ultralytics YOLO のインストール
 
-YOLOv8n-face モデルをダウンロードし、`models/`ディレクトリに配置してください：
+以下のコマンドで Ultralytics と YOLO11 をインストールします:
 
 ```bash
-# 推奨: Hugging Faceからダウンロード
-wget https://huggingface.co/arnabdhar/YOLOv8-Face-Detection/resolve/main/model.pt -O models/yolov8n-face.pt
-
-# または、GitHubリリースからダウンロード
-# wget https://github.com/akanametov/yolov8-face/releases/download/v1.0/yolov8n-face.pt -O models/yolov8n-face.pt
-
-# ダウンロード後、ファイルサイズを確認（約6MB程度が目安）
-ls -lh models/yolov8n-face.pt
+cd ~
+pip install -U pip
+git clone https://github.com/ultralytics/ultralytics
+cd ultralytics
+pip install -e ".[export]" onnxslim
 ```
 
-> **重要**: ダウンロードが完了したら、ファイルサイズを必ず確認してください。  
-> 不完全なダウンロードや破損したファイルは、変換時にエラーが発生します。
+### 3. DeepStream-YOLO のセットアップ
 
-> **注**: YOLOv8n-face モデルは顔検出用にファインチューニングされた YOLOv8n モデルです。  
-> 上記以外にも、各種モデルハブから入手できます。
-
-### 2. ONNX への変換
-
-PyTorch モデル(.pt)を ONNX 形式に変換します：
+YOLO11 モデルを DeepStream で使用するために、DeepStream-Yolo リポジトリを使用します:
 
 ```bash
-python3 scripts/convert_yolo_to_onnx.py
+cd ~
+git clone https://github.com/marcoslucianops/DeepStream-Yolo
 ```
 
-変換が成功すると、`models/yolov8n-face.onnx`が生成されます。
+### 4. YOLO11 モデルの準備
 
-### 3. DeepStream カスタムパーサーライブラリのビルド
+#### 4.1 モデルのダウンロード
 
-DeepStream 7.1 では、カスタムパーサーライブラリを手動でビルドする必要があります：
+YOLO11 の顔検出モデルをダウンロードします:
 
 ```bash
-# カスタムパーサーディレクトリに移動
-cd /opt/nvidia/deepstream/deepstream-7.1/sources/libs/nvdsinfer_customparser/
-
-# ビルド（CUDA_VERはnvcc --versionで確認したバージョンを指定）
-sudo CUDA_VER=12.6 make
-
-# libディレクトリにインストール
-sudo make install
-
-# インストールを確認
-ls -lh /opt/nvidia/deepstream/deepstream-7.1/lib/libnvds_infercustomparser.so
+cd ~/ultralytics
+# YOLO11の標準モデルをダウンロード（例：yolo11s.pt）
+wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt
 ```
 
-### 4. TensorRT エンジンの生成
+顔検出用にファインチューニングされたモデルを使用する場合は、該当するモデルファイルをダウンロードしてください。
 
-初回実行時に、ONNX ファイルから自動的に TensorRT エンジン(.engine)が生成されます。
-この処理には数分かかる場合がありますが、2 回目以降は既存の engine ファイルが使用されます。
+#### 4.2 ONNX への変換
 
-## 設定のポイント
+DeepStream-Yolo のエクスポートスクリプトを Ultralytics ディレクトリにコピーします:
 
-- YOLOv8 カスタムライブラリ（`/opt/nvidia/deepstream/deepstream-7.1/lib/libnvdsinfer_custom_impl_yolo.so`）を使用して顔検出を実行します
-- `network-mode=2`で FP16 推論を有効化し、Orin NX Super 向けに精度と速度のバランスを確保します
-- 入力解像度は 640x640、検出閾値は 0.30 に設定されています
-- 本スクリプトは黒塗り矩形で顔を隠します。モザイク化が必須の場合は VPI や PyCUDA を使った独自 CUDA カーネルを pad probe 内で実装してください
+```bash
+cp ~/DeepStream-Yolo/utils/export_yolo11.py ~/ultralytics
+cd ~/ultralytics
+```
 
-## 実行手順
+モデルを ONNX 形式に変換します:
 
-### ローカル表示プログラム（RTSP → 顔モザイク → 画面表示）
+```bash
+# 基本的な変換（FP32）
+python3 export_yolo11.py -w yolo11s.pt
 
-RTSP カメラの映像をローカル画面に表示しながら顔モザイク処理を確認できるプログラムです：
+# FP16精度で変換（推奨）
+python3 export_yolo11.py -w yolo11s.pt --simplify
+
+# 動的バッチサイズを使用する場合（DeepStream 6.1以降）
+python3 export_yolo11.py -w yolo11s.pt --dynamic --simplify
+```
+
+**変換オプション**:
+
+- `--opset`: ONNX の opset バージョン（デフォルト: 17、DeepStream 5.1 では 12 以下）
+- `--simplify`: ONNX モデルを簡略化
+- `--dynamic`: 動的バッチサイズを有効化（DeepStream 6.1 以降）
+- `-s SIZE` または `--size SIZE`: 入力サイズを指定（デフォルト: 640）
+
+#### 4.3 生成されたファイルをプロジェクトにコピー
+
+```bash
+# ONNXファイルとラベルファイルをDeepStream-Yoloにコピー
+cp yolo11s.pt.onnx labels.txt ~/DeepStream-Yolo
+
+# DeepStream-Yoloディレクトリに移動
+cd ~/DeepStream-Yolo
+```
+
+### 5. CUDA 環境変数の設定
+
+JetPack のバージョンに応じて CUDA バージョンを設定します:
+
+```bash
+# JetPack 6.1の場合
+export CUDA_VER=12.6
+
+# JetPack 5.1.3の場合
+export CUDA_VER=11.4
+
+# JetPack 4.6.4の場合
+export CUDA_VER=10.2
+```
+
+### 6. カスタムライブラリのビルド
+
+```bash
+cd ~/DeepStream-Yolo
+make -C nvdsinfer_custom_impl_Yolo clean && make -C nvdsinfer_custom_impl_Yolo
+
+# システムの動的リンクライブラリキャッシュを更新
+sudo ldconfig
+```
+
+**重要**: `sudo ldconfig`を実行することで、新しくビルドされたライブラリをシステムが認識できるようになります。
+
+### 7. プロジェクトファイルの準備
+
+生成された ONNX ファイルとビルドされたライブラリをこのプロジェクトのディレクトリにコピーします:
+
+```bash
+# このプロジェクトのディレクトリに移動（パスは環境に応じて変更）
+cd ~/face-mosaic-jetson-v2
+
+# ONNXファイルをコピー
+cp ~/DeepStream-Yolo/yolo11s.pt.onnx models/
+
+# ラベルファイルをコピー（必要に応じて）
+cp ~/DeepStream-Yolo/labels.txt models/labels_face.txt
+
+# config_infer_primary_face_yolo11.txtを編集して、正しいパスを設定
+```
+
+`config_infer_primary_face_yolo11.txt`内の以下の行を確認・編集してください:
+
+```ini
+[property]
+onnx-file=models/yolo11s.pt.onnx
+labelfile-path=models/labels_face.txt
+custom-lib-path=/home/Jetson/DeepStream-Yolo/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
+```
+
+**重要**: `custom-lib-path`は実際のビルドされたライブラリのパスに変更してください。
+
+### 8. Python 依存パッケージのインストール
+
+```bash
+pip3 install pyds gi opencv-python
+```
+
+## 使用方法
+
+### ローカル表示モード（simple_rtsp_local_blackout.py）
+
+RTSP カメラの映像をローカル画面に表示しながら、顔を黒く塗りつぶします:
 
 ```bash
 # 基本的な使用方法
-python3 simple_rtsp_local.py \
+python3 simple_rtsp_local_blackout.py \
     "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
-    --infer-config ./config_infer_primary_facedet.txt \
-    --mosaic-level 6
+    --infer-config ./config_infer_primary_face_yolo11.txt
 
 # 解像度とフレームレートを指定
-python3 simple_rtsp_local.py \
+python3 simple_rtsp_local_blackout.py \
     "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
-    --infer-config ./config_infer_primary_facedet.txt \
+    --infer-config ./config_infer_primary_face_yolo11.txt \
     --width 1920 --height 1080 --fps 30
 
 # TCP接続を使用する場合（UDPで接続できない場合）
-python3 simple_rtsp_local.py \
+python3 simple_rtsp_local_blackout.py \
     "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
-    --infer-config ./config_infer_primary_facedet.txt \
+    --infer-config ./config_infer_primary_face_yolo11.txt \
     --tcp
 ```
 
 **主なオプション**:
 
-- `--infer-config`: nvinfer の設定ファイルパス
+- `--infer-config`: nvinfer の設定ファイルパス（必須）
 - `--width/--height/--fps`: 映像の解像度とフレームレート
-- `--mosaic-level`: モザイクレベル（1-10、将来の拡張用）
 - `--tcp`: RTSP を TCP 接続で受信（デフォルトは UDP）
 - `--latency`: RTSP ソースのレイテンシ（ミリ秒、デフォルト 200）
 - `--log-level`: ログレベル（DEBUG/INFO/WARNING/ERROR）
@@ -146,20 +226,13 @@ python3 simple_rtsp_local.py \
 ```
 rtspsrc → rtph264depay → h264parse → nvv4l2decoder
   → nvvideoconvert → capsfilter(NVMM) → nvstreammux
-  → nvinfer(顔検出) → nvdsosd(塗りつぶし処理)
+  → nvinfer(YOLO11顔検出) → nvdsosd(黒塗り処理)
   → nvvideoconvert → nvegltransform → nveglglessink
 ```
 
-**重要な注意点**:
+### YouTube 配信モード（simple_rtsp_youtube.py）
 
-- このプログラムは`dsexample`プラグインを使用していません
-- `dsexample`は OpenCV なしでコンパイルされている場合、blur 機能が動作しません
-- 代わりに`nvdsosd`と pad probe を使用して顔領域を黒い矩形で塗りつぶします
-- OpenCV に依存しないため、より安定した動作が期待できます
-
-### テストプログラム（顔検出なし）
-
-まず、シンプルな RTSP→YouTube 配信プログラムで基本的な動作を確認してください：
+RTSP カメラの映像を YouTube Live に配信します（顔検出処理なし）:
 
 ```bash
 python3 simple_rtsp_youtube.py \
@@ -167,134 +240,107 @@ python3 simple_rtsp_youtube.py \
     "YOUR-YOUTUBE-STREAM-KEY"
 ```
 
-このプログラムは顔検出や DeepStream の nvstreammux を使わず、最小構成で動作します。
-まずこちらで配信が成功することを確認してから、本番の顔モザイクプログラムに進んでください。
-
 **重要なポイント**:
 
 - YouTube Live への配信には音声ストリームが必須です
 - このプログラムはダミー音声（無音）を自動的に追加します
 - 配信開始後、YouTube Studio で映像が表示されるまで 10-30 秒かかる場合があります
 
-### 本番プログラム（顔モザイク付き）
+**パイプライン構成**:
 
-```bash
-# デフォルト（1080p @ 6Mbps）
-python3 deepstream_youtube.py \
-    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
-    "YOUR-YOUTUBE-STREAM-KEY"
-
-# 720pで配信する場合
-python3 deepstream_youtube.py \
-    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
-    "YOUR-YOUTUBE-STREAM-KEY" \
-    --width 1280 --height 720 --bitrate 2500000
+```
+rtspsrc → rtph264depay → h264parse → nvv4l2decoder
+  → nvvideoconvert → nvv4l2h264enc → h264parse → flvmux
+  → rtmpsink (YouTube)
 ```
 
-主なオプション:
+## 設定ファイルの説明
 
-- `--infer-config`: 別の`nvinfer`設定ファイルを使用。
-- `--width/--height/--fps`: 中継解像度やフレームレートを上書き（既定 1920x1080@30、720p の場合は`--width 1280 --height 720`を指定）。
-- `--bitrate`: HW エンコーダのビットレート（既定 6 Mbps、720p の場合は 2500000 を推奨）。
-- `--youtube-ingest`: YouTube の RTMP エンドポイントを変更（既定`rtmp://a.rtmp.youtube.com/live2`）。
+### config_infer_primary_face_yolo11.txt
 
-### 想定されるログ
+YOLO11 モデルの推論設定を行うファイルです。主要なパラメータ:
 
-- 入力/出力設定をまとめたバナー。
-- GStreamer バスメッセージ（`INFO`/`WARNING`/`ERROR`）。
-- 初回実行時の TensorRT エンジン自動ビルド（約 1 分）。
+- `onnx-file`: ONNX モデルファイルのパス
+- `model-engine-file`: TensorRT エンジンファイルのパス（初回実行時に自動生成）
+- `custom-lib-path`: YOLO カスタムパーサーライブラリのパス
+- `network-mode`: 推論精度（0=FP32, 1=INT8, 2=FP16）
+- `num-detected-classes`: 検出クラス数
+- `pre-cluster-threshold`: 検出閾値
 
-`Ctrl+C`で終了できます。SIGINT/SIGTERM を補足し、パイプラインを安全に停止します。
+## トラブルシューティング
 
-## 運用ヒント
+### TensorRT エンジンの生成
 
-- 可能な限り有線 LAN を使用し、Wi-Fi による RTMP アンダーランを回避。
-- `tegrastats`でエンコーダ負荷を監視（720p30 FP16 で GPU 35%未満が目安）。
-- 複数カメラ対応は`nvstreammux`の`request_pad`を追加し、`gie-unique-id`を重複させないよう拡張。
-- YouTube 側で拒否される場合はエンドポイント、ストリームキー、システム時刻（`sudo timedatectl set-ntp true`）を再確認。
+初回実行時、ONNX ファイルから TensorRT エンジン（.engine）が自動生成されます。この処理には数分かかる場合がありますが、2 回目以降は既存の engine ファイルが使用されます。
 
-## トラブルシュート
+エンジン生成でエラーが発生した場合:
 
-### モデル関連
+```bash
+# 既存のengineファイルを削除して再生成
+rm models/*.engine
+```
 
-- **ONNX 変換時の EOFError（"Ran out of input"）**:
+### カスタムライブラリが見つからない
 
-  - モデルファイル（.pt）が破損しているか、ダウンロードが不完全です
-  - 解決方法:
+エラー: `Unable to open custom lib`
 
-    ```bash
-    # 既存のモデルファイルを削除
-    rm models/yolov8n-face.pt
+解決方法:
 
-    # 再度ダウンロード
-    wget https://huggingface.co/arnabdhar/YOLOv8-Face-Detection/resolve/main/model.pt -O models/yolov8n-face.pt
+```bash
+# ライブラリが正しくビルドされているか確認
+ls -l ~/DeepStream-Yolo/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
 
-    # ファイルサイズを確認（約6MB程度が目安）
-    ls -lh models/yolov8n-face.pt
+# config_infer_primary_face_yolo11.txt内のcustom-lib-pathを正しいパスに修正
+```
 
-    # 再度変換を試行
-    python3 scripts/convert_yolo_to_onnx.py
-    ```
+### 顔が検出されない
 
-- **ONNX ファイルが見つからない**: `scripts/convert_yolo_to_onnx.py`を実行して ONNX ファイルを生成してください
+以下を確認してください:
 
-- **YOLO カスタムライブラリのエラー**:
+- YOLO11 モデルが顔検出用にトレーニングされているか
+- `pre-cluster-threshold`（検出閾値）が適切か（推奨: 0.3-0.5）
+- カメラの解像度と距離が適切か
 
-  - DeepStream 7.1 が正しくインストールされているか確認してください
-  - カスタムライブラリパスを確認してください:
-    ```bash
-    ls -l /opt/nvidia/deepstream/deepstream-7.1/lib/libnvdsinfer_custom_impl_yolo.so
-    ```
-  - ファイルが存在しない場合は、DeepStream のバージョンに応じてパスを調整してください
+検出閾値を下げてみる:
 
-- **顔が検出されない**:
-  - YOLOv8n-face モデルが正しく配置されているか確認
-  - 検出閾値（`pre-cluster-threshold`）を調整してみてください
-  - ONNX ファイルと engine ファイルを削除して再生成してください
+```ini
+[class-attrs-all]
+pre-cluster-threshold=0.3  # より低い値で試す
+```
 
-### DeepStream 関連
+### ローカル表示のエラー
 
-- **`nvinfer`のエンジン生成失敗**:
-  - 既存の`.engine`ファイルを削除して再実行
-  - JetPack/DeepStream のバージョン整合を確認
-  - ディスク空き容量を確認（エンジン生成には一時的に大きな空き容量が必要）
+エラー: `Could not open display`
 
-### dsexample プラグインの問題
+解決方法:
 
-- **エラー内容**:
+```bash
+# X11環境を有効化
+export DISPLAY=:0
 
-  ```
-  WARN dsexample: OpenCV has been deprecated, hence object blurring will not work.
-  WARN GST_PADS: Failed to activate pad
-  ```
+# SSH経由の場合、X11フォワーディングを有効化
+ssh -X user@jetson-ip
+```
 
-- **原因**:
+### YouTube 配信のエラー
 
-  - DeepStream の`dsexample`プラグインが OpenCV なしでコンパイルされている
-  - blur 機能を使用するには OpenCV が必要だが、デフォルトでは無効化されている
+- ストリームキーが正しいか確認
+- インターネット接続が安定しているか確認（有線 LAN 推奨）
+- システム時刻が正確か確認: `sudo timedatectl set-ntp true`
 
-- **解決方法（2 つのアプローチ）**:
+## 参考資料
 
-  1. **推奨: nvdsosd + pad probe を使用**（simple_rtsp_local.py で実装済み）
+- [Ultralytics YOLO11 Documentation](https://docs.ultralytics.com/)
+- [NVIDIA DeepStream SDK Documentation](https://docs.nvidia.com/metropolis/deepstream/dev-guide/)
+- [DeepStream-Yolo GitHub Repository](https://github.com/marcoslucianops/DeepStream-Yolo)
+- [YOLO11 on NVIDIA Jetson with DeepStream Guide](https://docs.ultralytics.com/ja/guides/deepstream-nvidia-jetson/)
 
-     - `dsexample`を使わず、`nvdsosd`と pad probe で顔領域を塗りつぶし
-     - OpenCV に依存しないため安定動作
-     - DeepStream ネイティブ機能のみを使用
+## ライセンス
 
-  2. **dsexample を OpenCV 付きで再コンパイル**（上級者向け）
-     ```bash
-     cd /opt/nvidia/deepstream/deepstream-7.1/sources/gst-plugins/gst-dsexample/
-     sudo make clean
-     sudo WITH_OPENCV=1 make
-     sudo make install
-     ```
-     ただし、この方法は OpenCV のバージョンや依存関係の管理が必要です。
+このプロジェクトは、関連する各コンポーネントのライセンスに従います。
 
-### その他
+## 謝辞
 
-- **音声が必要**: `queue ! audioconvert ! voaacenc ! aacparse ! flvmux.audio`を追加し、音声パイプラインを構築する
-- **黒塗りではなくモザイク**: pad probe 内の処理を VPI の`vpiSubmitRescale`や独自 CUDA カーネルに置き換え、縮小 → 拡大でピクセル化を行う
-- **YouTube 接続エラー**: ストリームキーとエンドポイント URL、システム時刻を確認してください
-- **ローカル表示のエラー**: X11 環境が必要です。SSH 経由で実行する場合は`export DISPLAY=:0`を設定してください
-
-これらの手順で、Jetson ネイティブかつゼロコピーなプライバシー保護リレーを長時間安定運用できます。
+- [Ultralytics](https://github.com/ultralytics/ultralytics) - YOLO11 モデル
+- [marcoslucianops](https://github.com/marcoslucianops) - DeepStream-Yolo 実装
+- NVIDIA - DeepStream SDK and Jetson Platform

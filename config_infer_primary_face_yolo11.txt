@@ -3,7 +3,7 @@
 onnx-file=./models/yolo11-face/yolo11n-face.onnx
 
 # 初回は自動生成でもOK（コメントアウト可）
-# model-engine-file=./models/yolo11-face/yolo11n-face_b1_fp16.engine
+model-engine-file=./models/yolo11-face/yolo11n-face_b1_fp16.engine
 
 network-type=0                 # detector
 num-detected-classes=1
