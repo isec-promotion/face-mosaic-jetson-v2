@@ -1,35 +1,23 @@
 [property]
-# ====== モデルのパス（DLしたものに合わせてあります） ======
 tlt-encoded-model=./models/facedetectir/facedetectir_vpruned_v1.0.1/resnet18_facedetectir_pruned.etlt
 labelfile-path=./models/facedetectir/facedetectir_vpruned_v1.0.1/labels.txt
 tlt-model-key=NVIDIA_TAO
 
-# 既存 .engine を固定指定しない（自動生成させる）
-# model-engine-file=./models/facedetect.engine
-
-# ====== 推論共通 ======
 gpu-id=0
 batch-size=1
-network-type=0                 # detector
+network-type=0
 gie-unique-id=1
 interval=0
-network-mode=2                 # 2=FP16（INT8使う場合は1＋校正ファイル）
+network-mode=2
 
-# 入力次元: C;H;W（※3要素のみ！）
 infer-dims=3;544;960
-
-# アスペクト維持（パディング）を有効化すると下流の座標ずれが減ります
 maintain-aspect-ratio=1
 symmetric-padding=1
 
-# DetectNet_v2(TAO) 用の標準パーサ
 custom-lib-path=/opt/nvidia/deepstream/deepstream-7.1/lib/libnvds_infercustomparser.so
 parse-bbox-func-name=NvDsInferParseCustomBatchedNMSTLT
-
-# このモデルは 1 クラス（face）想定
 num-detected-classes=1
 
-# ====== しきい値など ======
 [class-attrs-all]
 pre-cluster-threshold=0.30
 nms-iou-threshold=0.5
