@@ -1,0 +1,28 @@
+[property]
+# ★あなたが置いたONNXの実パスに変更してください
+onnx-file=./models/yolo11-face/yolo11n-face.onnx
+
+# 初回は自動生成でもOK（コメントアウト可）
+# model-engine-file=./models/yolo11-face/yolo11n-face_b1_fp16.engine
+
+network-type=0                 # detector
+num-detected-classes=1
+batch-size=1
+gie-unique-id=1
+network-mode=2                 # FP16
+infer-dims=3;640;640
+maintain-aspect-ratio=1
+
+# ★ビルドしたカスタム lib の絶対パス（大文字版を指定）
+custom-lib-path=/opt/nvidia/deepstream/deepstream-7.1/lib/libnvdsinfer_custom_impl_Yolo.so
+
+# ★関数名は環境に合わせて切り替え（nm -D の結果に合わせる）
+parse-bbox-func-name=NvDsInferParseYolo
+#parse-bbox-func-name=NvDsInferParseCustomYoloV8
+
+engine-create-func-name=NvDsInferYoloCudaEngineGet
+
+[class-attrs-all]
+pre-cluster-threshold=0.30
+nms-iou-threshold=0.50
+topk=100
