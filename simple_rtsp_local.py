@@ -10,6 +10,8 @@ python3 simple_rtsp_local.py \
   --infer-config ./config_infer_primary_facedet.txt \
   --mosaic-level 6 \
   --width 1920 --height 1080 --fps 30
+
+gst-inspect-1.0 dsexample | sed -n '/Properties:/,/Pad Templates:/p'
 """
 
 import argparse
@@ -33,8 +35,8 @@ def parse_args():
     p.add_argument("rtsp_url", help="rtsp://user:pass@ip:554/Streaming/Channels/101 等")
     p.add_argument("--infer-config", default="./config_infer_primary_facedet.txt",
                    help="nvinfer の設定ファイル")
-    p.add_argument("--mosaic-level", type=int, default=6,
-                   help="モザイクの粒度（大きいほど荒い）")
+    p.add_argument("--mosaic-level", type=int, default=6,  # 予備：将来拡張用（未使用）
+                   help="（一部の dsexample でモザイク粒度を変えられる場合に使用）")
     p.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     p.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     p.add_argument("--fps", type=int, default=DEFAULT_FPS)
@@ -69,7 +71,7 @@ def on_pad_added_decodebin(decodebin, pad, data):
     caps_pre: Gst.Element = data["caps_pre"]
     streammux: Gst.Element = data["streammux"]
 
-    # decodebin → nvvidconv_pre
+    # decodebin → nvvideoconvert(pre)
     sinkpad_conv = nvvidconv_pre.get_static_pad("sink")
     if sinkpad_conv and not sinkpad_conv.is_linked():
         if pad.link(sinkpad_conv) != Gst.PadLinkReturn.OK:
@@ -109,16 +111,15 @@ def bus_call(bus, message, loop, pipeline):
 
 def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     """
-    パイプライン（単一路）:
-      uridecodebin
-        -> nvvideoconvert(pre)
-        -> caps(memory:NVMM, NV12)
-        -> nvstreammux(batch=1, width/height/fps)
-        -> nvinfer(顔)
-        -> dsexample(検出枠モザイク)
-        -> nvvideoconvert
-        -> nvegltransform
-        -> nveglglessink
+    uridecodebin
+      -> nvvideoconvert(pre)
+      -> caps(memory:NVMM,NV12)
+      -> nvstreammux(batch=1)
+      -> nvinfer(顔)
+      -> dsexample(検出枠をモザイク/ブラー)
+      -> nvvideoconvert
+      -> nvegltransform
+      -> nveglglessink
     """
     pipe = Gst.Pipeline.new("rtsp-face-mosaic-local")
     if not pipe:
@@ -126,9 +127,8 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
 
     # Source
     source = make("uridecodebin", "rtsp-source", uri=args.rtsp_url)
-    # source.set_property("live", True)  # ← NG（プロパティが存在しない）
 
-    # pre: CPU→NVMM 変換（安全のため前段に入れる）
+    # pre: CPU→NVMM 変換
     nvvidconv_pre = make("nvvideoconvert", "nvvidconv-pre")
     caps_pre = make("capsfilter", "caps-pre",
                     caps=Gst.Caps.from_string("video/x-raw(memory:NVMM), format=NV12"))
@@ -144,12 +144,10 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
                 config_file_path=args.infer_config,
                 unique_id=1)
 
-    # dsexample（モザイク）
+    # dsexample（確実に存在するプロパティのみ設定）
     dsex = make("dsexample", "mosaic")
-    dsex.set_property("full-frame", 0)
-    dsex.set_property("process-mode", 2)   # 2 = objects
-    dsex.set_property("blur-objects", 1)   # 検出枠をモザイク
-    dsex.set_property("mosaic-size", args.mosaic_level)  # 粒度
+    dsex.set_property("full-frame", 0)     # 0: オブジェクト領域のみ処理
+    dsex.set_property("blur-objects", 1)   # 1: 検出枠をモザイク/ブラー（実装依存）
 
     # 表示系
     nvvidconv = make("nvvideoconvert", "nvvidconv")
@@ -177,7 +175,7 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     assert nvvidconv.link(nveglxform)
     assert nveglxform.link(sink)
 
-    LOG.info("パイプライン構築完了（ローカル表示・顔モザイク）")
+    LOG.info("パイプライン構築完了（ローカル表示・顔モザイク / 汎用プロパティ）")
     return pipe
 
 def main() -> int:
