@@ -28,17 +28,18 @@ DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
 DEFAULT_FPS = 30
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="RTSP→顔モザイク→ローカル表示（DeepStream最小構成）")
-    p.add_argument("rtsp_url", help="RTSP URL（例: rtsp://user:pass@ip:554/Streaming/Channels/101）")
+def parse_args():
+    p = argparse.ArgumentParser(description="RTSP→顔モザイク→ローカル表示（DeepStream）")
+    p.add_argument("rtsp_url", help="rtsp://user:pass@ip:554/Streaming/Channels/101 等")
     p.add_argument("--infer-config", default="./config_infer_primary_facedet.txt",
-                   help="nvinfer の設定ファイル（顔検出モデルを指定）")
+                   help="nvinfer の設定ファイル")
     p.add_argument("--mosaic-level", type=int, default=6,
-                   help="モザイクの粒度（3〜10程度。大きいほど荒い）")
-    p.add_argument("--width", type=int, default=DEFAULT_WIDTH, help="処理基準の幅（nvstreammux）")
-    p.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help="処理基準の高さ（nvstreammux）")
-    p.add_argument("--fps", type=int, default=DEFAULT_FPS, help="処理基準のFPS（nvstreammux）")
-    p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+                   help="モザイクの粒度（大きいほど荒い）")
+    p.add_argument("--width", type=int, default=DEFAULT_WIDTH)
+    p.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
+    p.add_argument("--fps", type=int, default=DEFAULT_FPS)
+    p.add_argument("--log-level", default="INFO",
+                   choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p.parse_args()
 
 def configure_logging(level: str) -> None:
@@ -48,32 +49,51 @@ def configure_logging(level: str) -> None:
 def make(factory: str, name: str, **props) -> Gst.Element:
     e = Gst.ElementFactory.make(factory, name)
     if not e:
-        raise RuntimeError(f"GStreamer 要素作成失敗: {factory} ({name})")
+        raise RuntimeError(f"要素作成失敗: {factory} ({name})")
     for k, v in props.items():
         e.set_property(k, v)
     return e
 
 def on_pad_added_decodebin(decodebin, pad, data):
-    """uridecodebin の新規 pad を nvstreammux の sink_0 に接続"""
+    """
+    decodebin -> (nvvideoconvert_pre -> caps_pre) -> nvstreammux.sink_0
+    """
     caps = pad.get_current_caps()
     if not caps:
         return
     name = caps.get_structure(0).get_name()
-    if name.startswith("video/"):
-        streammux = data["streammux"]
-        sinkpad = streammux.get_request_pad("sink_0")
-        if not sinkpad:
-            LOG.error("nvstreammux sink pad 取得失敗")
+    if not name.startswith("video/"):
+        return
+
+    nvvidconv_pre: Gst.Element = data["nvvidconv_pre"]
+    caps_pre: Gst.Element = data["caps_pre"]
+    streammux: Gst.Element = data["streammux"]
+
+    # decodebin → nvvidconv_pre
+    sinkpad_conv = nvvidconv_pre.get_static_pad("sink")
+    if sinkpad_conv and not sinkpad_conv.is_linked():
+        if pad.link(sinkpad_conv) != Gst.PadLinkReturn.OK:
+            LOG.error("decodebin → nvvideoconvert(pre) のリンク失敗")
             return
-        if pad.link(sinkpad) != Gst.PadLinkReturn.OK:
-            LOG.error("decodebin→nvstreammux のリンク失敗")
-        else:
-            LOG.info("映像を nvstreammux に接続しました")
+        LOG.info("decodebin → nvvideoconvert(pre) 接続")
+
+    # caps_pre → streammux.sink_0
+    srcpad_caps = caps_pre.get_static_pad("src")
+    sinkpad_mux = streammux.get_request_pad("sink_0")
+    if not sinkpad_mux:
+        LOG.error("nvstreammux sink_0 取得失敗")
+        return
+    if srcpad_caps.is_linked():
+        return
+    if srcpad_caps.link(sinkpad_mux) != Gst.PadLinkReturn.OK:
+        LOG.error("caps_pre → nvstreammux.sink_0 のリンク失敗")
+    else:
+        LOG.info("caps_pre → nvstreammux.sink_0 接続")
 
 def bus_call(bus, message, loop, pipeline):
     t = message.type
     if t == Gst.MessageType.EOS:
-        LOG.info("EOS 受信。終了します。")
+        LOG.info("EOS 受信。終了。")
         loop.quit()
     elif t == Gst.MessageType.ERROR:
         err, debug = message.parse_error()
@@ -89,64 +109,68 @@ def bus_call(bus, message, loop, pipeline):
 
 def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     """
-    パイプライン:
+    パイプライン（単一路）:
       uridecodebin
+        -> nvvideoconvert(pre)
+        -> caps(memory:NVMM, NV12)
         -> nvstreammux(batch=1, width/height/fps)
-        -> nvinfer(顔検出; config_infer_primary_facedet.txt流用)
-        -> dsexample(検出枠にモザイク)
+        -> nvinfer(顔)
+        -> dsexample(検出枠モザイク)
         -> nvvideoconvert
         -> nvegltransform
-        -> nveglglessink（Jetson画面表示）
-    すべて NVMM 上で処理し、エンコードは行わない（ローカル確認用）。
+        -> nveglglessink
     """
     pipe = Gst.Pipeline.new("rtsp-face-mosaic-local")
     if not pipe:
         raise RuntimeError("Pipeline 作成失敗")
 
-    # 1) ソース（RTSP）
+    # Source
     source = make("uridecodebin", "rtsp-source", uri=args.rtsp_url)
-    # NG: uridecodebin には live プロパティなし
-    # source.set_property("live", True)
+    # source.set_property("live", True)  # ← NG（プロパティが存在しない）
 
-    # 2) バッチャ
+    # pre: CPU→NVMM 変換（安全のため前段に入れる）
+    nvvidconv_pre = make("nvvideoconvert", "nvvidconv-pre")
+    caps_pre = make("capsfilter", "caps-pre",
+                    caps=Gst.Caps.from_string("video/x-raw(memory:NVMM), format=NV12"))
+
+    # DeepStream core
     streammux = make("nvstreammux", "stream-muxer",
                      batch_size=1,
                      width=args.width,
                      height=args.height,
                      live_source=True,
                      buffer_pool_size=8)
-
-    # 3) 推論（顔）
     pgie = make("nvinfer", "primary-fd",
                 config_file_path=args.infer_config,
                 unique_id=1)
 
-    # 4) モザイク（dsexample）
-    #   process-mode=2: オブジェクト単位処理
-    #   blur-objects=1: 検出BBOXをモザイク（ブラーでなくモザイク）
-    dsex = make("dsexample", "mosaic",
-                full_frame=0,
-                process_mode=2,
-                blur_objects=1,
-                mosaic_size=args.mosaic_level,
-                unique_id=15)
+    # dsexample（モザイク）
+    dsex = make("dsexample", "mosaic")
+    dsex.set_property("full-frame", 0)
+    dsex.set_property("process-mode", 2)   # 2 = objects
+    dsex.set_property("blur-objects", 1)   # 検出枠をモザイク
+    dsex.set_property("mosaic-size", args.mosaic_level)  # 粒度
 
-    # 5) 表示前の変換
+    # 表示系
     nvvidconv = make("nvvideoconvert", "nvvidconv")
-    # EGL へ渡す前段
     nveglxform = make("nvegltransform", "nveglxform")
+    sink = make("nveglglessink", "display", sync=False)
 
-    # 6) 画面表示
-    #   Jetson では nveglglessink が最も相性良い
-    sink = make("nveglglessink", "display", sync=False)  # 遅延を抑制するため sync=False が無難
-
-    for e in (source, streammux, pgie, dsex, nvvidconv, nveglxform, sink):
+    for e in (source, nvvidconv_pre, caps_pre,
+              streammux, pgie, dsex, nvvidconv, nveglxform, sink):
         pipe.add(e)
 
-    # uridecodebin は動的リンク
-    source.connect("pad-added", on_pad_added_decodebin, {"streammux": streammux})
+    # 動的リンク: decodebin → (pre) → streammux
+    source.connect("pad-added", on_pad_added_decodebin, {
+        "nvvidconv_pre": nvvidconv_pre,
+        "caps_pre": caps_pre,
+        "streammux": streammux
+    })
 
-    # DeepStream ラインを静的リンク
+    # 静的リンク（pre）
+    assert nvvidconv_pre.link(caps_pre)
+
+    # DS line
     assert streammux.link(pgie)
     assert pgie.link(dsex)
     assert dsex.link(nvvidconv)
