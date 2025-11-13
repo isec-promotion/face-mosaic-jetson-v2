@@ -1,0 +1,21 @@
+[property]
+gpu-id=0
+net-scale-factor=1.0
+model-engine-file=./models/facedetect.engine
+labelfile-path=./models/labels.txt
+network-type=0               # 0 = Detector
+batch-size=1
+process-mode=1               # 1 = primary
+gie-unique-id=1
+interval=0
+# 入力色空間：nvstreammux→nvinfer は NV12/RGBAどちらでも可。必要に応じて次を有効化
+# network-color-format=0     # 0=RGB, 1=BGR（モデルに応じて）
+
+# NMS/閾値はエンジンに内包/固定の場合もあります。必要に応じて：
+# parse-bbox-func-name=NvDsInferParseCustomNMSTLT
+# custom-lib-path=./nvinfer_custom_impl_TAO/libnvdsinfer_custom_impl_TAO.so
+
+[class-attrs-all]
+pre-cluster-threshold=0.3
+nms-iou-threshold=0.5
+topk=200
