@@ -1,21 +1,24 @@
 [property]
+tlt-encoded-model=./models/facedetectir/facedetectir_vpruned_v1.0.1/resnet18_facedetectir_pruned.etlt
+labelfile-path=./models/facedetectir/facedetectir_vpruned_v1.0.1/labels.txt
+tlt-model-key=NVIDIA_TAO
+
 gpu-id=0
-net-scale-factor=1.0
-model-engine-file=./models/facedetect.engine
-labelfile-path=./models/labels.txt
-network-type=0               # 0 = Detector
 batch-size=1
-process-mode=1               # 1 = primary
+network-type=0
 gie-unique-id=1
 interval=0
-# 入力色空間：nvstreammux→nvinfer は NV12/RGBAどちらでも可。必要に応じて次を有効化
-# network-color-format=0     # 0=RGB, 1=BGR（モデルに応じて）
+network-mode=2
 
-# NMS/閾値はエンジンに内包/固定の場合もあります。必要に応じて：
-# parse-bbox-func-name=NvDsInferParseCustomNMSTLT
-# custom-lib-path=./nvinfer_custom_impl_TAO/libnvdsinfer_custom_impl_TAO.so
+infer-dims=3;544;960
+maintain-aspect-ratio=1
+symmetric-padding=1
+
+custom-lib-path=/opt/nvidia/deepstream/deepstream-7.1/lib/libnvds_infercustomparser.so
+parse-bbox-func-name=NvDsInferParseCustomBatchedNMSTLT
+num-detected-classes=1
 
 [class-attrs-all]
-pre-cluster-threshold=0.3
+pre-cluster-threshold=0.30
 nms-iou-threshold=0.5
-topk=200
+topk=100
