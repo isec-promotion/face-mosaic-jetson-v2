@@ -1,28 +1,24 @@
 [property]
 gpu-id=0
-net-scale-factor=0.0039215697906911373
-onnx-file=models/yolov8n-face.onnx
-model-engine-file=models/yolov8n-face.onnx_b1_gpu0_fp16.engine
-labelfile-path=models/labels_face.txt
-model-color-format=0
-network-mode=2
-num-detected-classes=1
 batch-size=1
-process-mode=1
 network-type=0
-cluster-mode=2
-interval=0
-gie-unique-id=1
-output-blob-names=output0
+num-detected-classes=1
+network-mode=2                 # FP16
+infer-dims=3;640;640;0        # モデル入力に合わせる
+
+# どちらか片方（エンジンか元モデル）を正しく指定
+# 既に engine を用意したなら：
+# model-engine-file=./models/facedetect.engine
+
+# エンジンが無い／自動生成したいなら（ETLT例）：
+tlt-encoded-model=./models/tlt_facedetect_pruned_v1.0/resnet18_facedetect_pruned.etlt
+tlt-model-key=nvidia_tlt
+int8-calib-file=./models/tlt_facedetect_pruned_v1.0/cal.bin   # あれば
+labelfile-path=./models/tlt_facedetect_pruned_v1.0/labels.txt
+
+# TLT/TAO 用パーサ
+custom-lib-path=/opt/nvidia/deepstream/deepstream-7.1/lib/libnvds_infercustomparser.so
+parse-bbox-func-name=NvDsInferParseCustomFaceDetect
+
+# スケーリング・前処理など（サンプルに合わせる）
 maintain-aspect-ratio=1
-infer-dims=3;640;640
-output-tensor-meta=0
-
-# YOLOv8カスタムパーサーを使用
-custom-lib-path=libnvdsinfer_custom_impl_yolo.so
-parse-bbox-func-name=NvDsInferParseCustomYoloV8
-
-[class-attrs-all]
-nms-iou-threshold=0.45
-pre-cluster-threshold=0.25
-topk=300
