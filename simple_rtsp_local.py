@@ -105,7 +105,8 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
 
     # 1) ソース（RTSP）
     source = make("uridecodebin", "rtsp-source", uri=args.rtsp_url)
-    source.set_property("live", True)
+    # NG: uridecodebin には live プロパティなし
+    # source.set_property("live", True)
 
     # 2) バッチャ
     streammux = make("nvstreammux", "stream-muxer",
