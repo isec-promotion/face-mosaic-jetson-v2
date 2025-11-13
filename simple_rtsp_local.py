@@ -29,11 +29,14 @@ import argparse
 import logging
 import signal
 import sys
+import ctypes
 
 import gi
 gi.require_version("Gst", "1.0")
 gi.require_version("GLib", "2.0")
 from gi.repository import Gst, GLib
+
+import pyds
 
 LOG = logging.getLogger("rtsp-local-face-mosaic-ds")
 
@@ -49,10 +52,8 @@ def parse_args():
     p.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     p.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     p.add_argument("--fps", type=int, default=DEFAULT_FPS)
-    p.add_argument("--proc-w", type=int, default=320,
-                   help="dsexample.processing-width（小さいほど荒く→疑似モザイク感）")
-    p.add_argument("--proc-h", type=int, default=180,
-                   help="dsexample.processing-height")
+    p.add_argument("--mosaic-level", type=int, default=6,
+                   help="モザイクレベル（1-10: 高いほど粗いモザイク）")
     p.add_argument("--latency", type=int, default=200,
                    help="rtspsrc の latency(ms)")
     p.add_argument("--tcp", action="store_true",
@@ -72,6 +73,67 @@ def make(factory: str, name: str, **props) -> Gst.Element:
     for k, v in props.items():
         e.set_property(k, v)
     return e
+
+def osd_sink_pad_buffer_probe(pad, info, mosaic_level):
+    """
+    nvdsosd の sink pad にプローブを設置し、検出された顔領域を塗りつぶす
+    """
+    gst_buffer = info.get_buffer()
+    if not gst_buffer:
+        return Gst.PadProbeReturn.OK
+
+    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+    l_frame = batch_meta.frame_meta_list
+    
+    while l_frame is not None:
+        try:
+            frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
+        except StopIteration:
+            break
+
+        l_obj = frame_meta.obj_meta_list
+        while l_obj is not None:
+            try:
+                obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
+            except StopIteration:
+                break
+
+            # 検出された顔に塗りつぶし矩形を追加
+            if obj_meta.obj_label == "face" or obj_meta.class_id == 0:
+                rect_params = obj_meta.rect_params
+                
+                # 塗りつぶし用の表示メタを追加（黒い矩形）
+                display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+                
+                # 矩形を追加
+                rect = display_meta.rect_params[display_meta.num_rects]
+                rect.left = int(rect_params.left)
+                rect.top = int(rect_params.top)
+                rect.width = int(rect_params.width)
+                rect.height = int(rect_params.height)
+                
+                # 黒で塗りつぶし（モザイク風にするため透明度調整も可能）
+                rect.border_width = 0
+                rect.has_bg_color = 1
+                rect.bg_color.red = 0.0
+                rect.bg_color.green = 0.0
+                rect.bg_color.blue = 0.0
+                rect.bg_color.alpha = 1.0  # 完全に不透明
+                
+                display_meta.num_rects += 1
+                pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
+
+            try:
+                l_obj = l_obj.next
+            except StopIteration:
+                break
+
+        try:
+            l_frame = l_frame.next
+        except StopIteration:
+            break
+
+    return Gst.PadProbeReturn.OK
 
 def link_dynamic_pad_rtspsrc(rtspsrc, pad, depay):
     """rtspsrcの動的src-padをrtp depayへ接続（H.264のみ想定）"""
@@ -114,8 +176,7 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
       → nvvideoconvert(pre) → caps(memory:NVMM,NV12)
       → nvstreammux(batch=1,width/height/live)
       → nvinfer(primary=face)
-      → dsexample(full-frame=false, blur-objects=true,
-                  processing-width/height=小さめ=疑似モザイク)
+      → nvdsosd(顔領域を塗りつぶし)
       → nvvideoconvert → nvegltransform → nveglglessink
     """
     pipe = Gst.Pipeline.new("rtsp-face-anon-local")
@@ -151,13 +212,10 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
                 config_file_path=args.infer_config,
                 unique_id=1)
 
-    # dsexample（blurのみ利用可能）
-    dsex = make("dsexample", "dsex")
-    dsex.set_property("full-frame", False)     # 検出枠のみ処理
-    dsex.set_property("blur-objects", True)    # ぼかし有効化
-    dsex.set_property("processing-width",  args.proc_w)
-    dsex.set_property("processing-height", args.proc_h)
-    # ↑ processing解像度を下げると“荒いぼかし”=擬似モザイク感が強まります
+    # nvdsosd で検出枠を描画（probe で塗りつぶし処理を追加）
+    nvosd = make("nvdsosd", "nvosd",
+                 process_mode=0,    # CPU mode
+                 display_text=False)  # テキスト表示なし
 
     nvvidconv = make("nvvideoconvert", "nvvidconv")
     nveglxform = make("nvegltransform", "nveglxform")
@@ -165,7 +223,7 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
 
     for e in (src, depay, parse, decoder,
               nvvidconv_pre, caps_pre, mux,
-              pgie, dsex, nvvidconv, nveglxform, sink):
+              pgie, nvosd, nvvidconv, nveglxform, sink):
         pipe.add(e)
 
     # rtspsrc は動的 pad
@@ -186,12 +244,22 @@ def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
 
     # DeepStream ライン
     assert mux.link(pgie)
-    assert pgie.link(dsex)
-    assert dsex.link(nvvidconv)
+    assert pgie.link(nvosd)
+    assert nvosd.link(nvvidconv)
     assert nvvidconv.link(nveglxform)
     assert nveglxform.link(sink)
 
-    LOG.info("パイプライン構築完了（RTSP明示・ローカル表示）")
+    # nvdsosd の sink pad にプローブを追加して顔領域を塗りつぶす
+    osdsinkpad = nvosd.get_static_pad("sink")
+    if not osdsinkpad:
+        raise RuntimeError("nvdsosd の sink pad 取得失敗")
+    osdsinkpad.add_probe(
+        Gst.PadProbeType.BUFFER,
+        osd_sink_pad_buffer_probe,
+        args.mosaic_level
+    )
+
+    LOG.info("パイプライン構築完了（ローカル表示・顔モザイク / 汎用プロパティ）")
     return pipe
 
 def main() -> int:

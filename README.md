@@ -108,6 +108,55 @@ ls -lh /opt/nvidia/deepstream/deepstream-7.1/lib/libnvds_infercustomparser.so
 
 ## 実行手順
 
+### ローカル表示プログラム（RTSP → 顔モザイク → 画面表示）
+
+RTSP カメラの映像をローカル画面に表示しながら顔モザイク処理を確認できるプログラムです：
+
+```bash
+# 基本的な使用方法
+python3 simple_rtsp_local.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --infer-config ./config_infer_primary_facedet.txt \
+    --mosaic-level 6
+
+# 解像度とフレームレートを指定
+python3 simple_rtsp_local.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --infer-config ./config_infer_primary_facedet.txt \
+    --width 1920 --height 1080 --fps 30
+
+# TCP接続を使用する場合（UDPで接続できない場合）
+python3 simple_rtsp_local.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --infer-config ./config_infer_primary_facedet.txt \
+    --tcp
+```
+
+**主なオプション**:
+
+- `--infer-config`: nvinfer の設定ファイルパス
+- `--width/--height/--fps`: 映像の解像度とフレームレート
+- `--mosaic-level`: モザイクレベル（1-10、将来の拡張用）
+- `--tcp`: RTSP を TCP 接続で受信（デフォルトは UDP）
+- `--latency`: RTSP ソースのレイテンシ（ミリ秒、デフォルト 200）
+- `--log-level`: ログレベル（DEBUG/INFO/WARNING/ERROR）
+
+**パイプライン構成**:
+
+```
+rtspsrc → rtph264depay → h264parse → nvv4l2decoder
+  → nvvideoconvert → capsfilter(NVMM) → nvstreammux
+  → nvinfer(顔検出) → nvdsosd(塗りつぶし処理)
+  → nvvideoconvert → nvegltransform → nveglglessink
+```
+
+**重要な注意点**:
+
+- このプログラムは`dsexample`プラグインを使用していません
+- `dsexample`は OpenCV なしでコンパイルされている場合、blur 機能が動作しません
+- 代わりに`nvdsosd`と pad probe を使用して顔領域を黒い矩形で塗りつぶします
+- OpenCV に依存しないため、より安定した動作が期待できます
+
 ### テストプログラム（顔検出なし）
 
 まず、シンプルな RTSP→YouTube 配信プログラムで基本的な動作を確認してください：
@@ -210,10 +259,42 @@ python3 deepstream_youtube.py \
   - JetPack/DeepStream のバージョン整合を確認
   - ディスク空き容量を確認（エンジン生成には一時的に大きな空き容量が必要）
 
+### dsexample プラグインの問題
+
+- **エラー内容**:
+
+  ```
+  WARN dsexample: OpenCV has been deprecated, hence object blurring will not work.
+  WARN GST_PADS: Failed to activate pad
+  ```
+
+- **原因**:
+
+  - DeepStream の`dsexample`プラグインが OpenCV なしでコンパイルされている
+  - blur 機能を使用するには OpenCV が必要だが、デフォルトでは無効化されている
+
+- **解決方法（2 つのアプローチ）**:
+
+  1. **推奨: nvdsosd + pad probe を使用**（simple_rtsp_local.py で実装済み）
+
+     - `dsexample`を使わず、`nvdsosd`と pad probe で顔領域を塗りつぶし
+     - OpenCV に依存しないため安定動作
+     - DeepStream ネイティブ機能のみを使用
+
+  2. **dsexample を OpenCV 付きで再コンパイル**（上級者向け）
+     ```bash
+     cd /opt/nvidia/deepstream/deepstream-7.1/sources/gst-plugins/gst-dsexample/
+     sudo make clean
+     sudo WITH_OPENCV=1 make
+     sudo make install
+     ```
+     ただし、この方法は OpenCV のバージョンや依存関係の管理が必要です。
+
 ### その他
 
 - **音声が必要**: `queue ! audioconvert ! voaacenc ! aacparse ! flvmux.audio`を追加し、音声パイプラインを構築する
 - **黒塗りではなくモザイク**: pad probe 内の処理を VPI の`vpiSubmitRescale`や独自 CUDA カーネルに置き換え、縮小 → 拡大でピクセル化を行う
 - **YouTube 接続エラー**: ストリームキーとエンドポイント URL、システム時刻を確認してください
+- **ローカル表示のエラー**: X11 環境が必要です。SSH 経由で実行する場合は`export DISPLAY=:0`を設定してください
 
 これらの手順で、Jetson ネイティブかつゼロコピーなプライバシー保護リレーを長時間安定運用できます。
