@@ -26,16 +26,14 @@ parse-bbox-func-name=NvDsInferParseYolo
 # エンジン作成関数名
 engine-create-func-name=NvDsInferYoloCudaEngineGet
 
-# 変更点 1: [class-attrs-all] の閾値を 1.0 以上にする
+# まず「全クラス」をほぼ全部落とす設定にする
 [class-attrs-all]
-# デフォルトですべてのクラスの検出を無効化
-pre-cluster-threshold=1.1
+pre-cluster-threshold=1.0      # 1.0 なのでほぼ何も通らない
 nms-iou-threshold=0.50
 topk=100
 
-# 変更点 2: [class-attrs-0] を追加し、人体のみ有効化
+# そのうえで「person(class_id=0)」だけ閾値を下げて生かす
 [class-attrs-0]
-# クラスID 0 (person) のみ、検出閾値を 0.30 に設定
-pre-cluster-threshold=0.30
+pre-cluster-threshold=0.30     # 人だけ 0.30 以上を通す
 nms-iou-threshold=0.50
 topk=100
