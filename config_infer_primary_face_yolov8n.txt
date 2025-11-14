@@ -1,7 +1,7 @@
 [property]
 # YOLOv8n ONNXモデルのパス
 # Ultralyticsからエクスポートしたモデルを配置
-onnx-file=models/yolov8n/yolov8n.onnx
+onnx-file=models/yolov8n/yolov8n.pt.onnx
 
 # TensorRTエンジンファイル（初回実行時に自動生成）
 # model-engine-fileを指定すると、nvinferが正しくファイルを保存できないため、

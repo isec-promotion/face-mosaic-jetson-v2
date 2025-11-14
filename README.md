@@ -229,11 +229,7 @@ cp ~/DeepStream-Yolo/utils/export_yolo11.py .
 
 # YOLO11n-faceモデルをONNXに変換
 # 出力先を直接指定しているので、後で mv は不要
-python3 export_yolo11.py \
-    -w ~/face-mosaic-jetson-v2/models/yolo11n-face/yolo11n-face.pt \
-    --simplify \
-    --dynamic \
-    -o ~/face-mosaic-jetson-v2/model　s/yolo11n-face/yolo11n-face.onnx
+python3 export_yolo11.py -w ~/face-mosaic-jetson-v2/models/yolo11n-face/yolo11n-face.pt --simplify --dynamic
 
 # これで指定ディレクトリに ONNX が直接生成される
 ```
@@ -378,15 +374,11 @@ wget https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
 cd ~/ultralytics
 
 # DeepStream-Yoloのエクスポートスクリプトをコピー（まだの場合）
-cp ~/DeepStream-Yolo/utils/export_yolov8.py .
+cp ~/DeepStream-Yolo/utils/export_yoloV8.py .
 
 # YOLOv8nモデルをONNXに変換
 # 出力先を直接指定
-python3 export_yolov8.py \
-    -w ~/face-mosaic-jetson-v2/models/yolov8n/yolov8n.pt \
-    --simplify \
-    --dynamic \
-    -o ~/face-mosaic-jetson-v2/models/yolov8n/yolov8n.onnx
+python3 export_yoloV8.py -w ~/face-mosaic-jetson-v2/models/yolov8n/yolov8n.pt --simplify --dynamic
 
 # 指定ディレクトリにONNXが直接生成される
 ```
@@ -430,7 +422,7 @@ models/yolov8n/yolov8n_b1_fp16.engine
 
 ```ini
 [property]
-onnx-file=./models/yolov8n/yolov8n.onnx
+onnx-file=./models/yolov8n/yolov8n.pt.onnx
 model-engine-file=./models/yolov8n/yolov8n_b1_fp16.engine
 num-detected-classes=80  # COCOデータセット（80クラス）
 ```
@@ -494,7 +486,7 @@ python3 simple_rtsp_local_yolov8n.py \
 
 ```bash
 # ONNXファイルの存在確認
-ls -l models/yolov8n/yolov8n.onnx
+ls -l models/yolov8n/yolov8n.pt.onnx
 
 # パスが正しいか設定ファイルを確認
 cat config_infer_primary_face_yolov8n.txt | grep onnx-file
@@ -536,7 +528,7 @@ pre-cluster-threshold=0.25  # デフォルトは0.30、より低い値で試す
 
 ```bash
 # ONNXファイルの存在確認
-ls -l models/yolo11n-face/yolo11n-face.onnx
+ls -l models/yolo11n-face/yolo11n-face.pt.onnx
 
 # パスが正しいか設定ファイルを確認
 cat config_infer_primary_face_yolo11n-face.txt | grep onnx-file
