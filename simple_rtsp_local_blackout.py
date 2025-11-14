@@ -103,7 +103,7 @@ def get_batch_meta(gst_buffer):
     return None
 
 def osd_sink_pad_buffer_probe(pad, info, u_data):
-    """nvdsosd の前で、検出BBoxを黒塗りに変更"""
+    """nvdsosd の前で、検出BBoxを加工（まずは person だけ赤枠表示）"""
     gst_buffer = info.get_buffer()
     if not gst_buffer:
         return Gst.PadProbeReturn.OK
@@ -127,16 +127,37 @@ def osd_sink_pad_buffer_probe(pad, info, u_data):
             except StopIteration:
                 break
 
-            rp = obj_meta.rect_params
-            rp.has_bg_color = 1
-            rp.bg_color.set(0.0, 0.0, 0.0, 1.0)  # RGBA 黒・不透明
-            rp.border_width = 0
-            rp.border_color.set(0.0, 0.0, 0.0, 0.0)
+            # 次のノードを先に覚えておく（削除してもループを進められるように）
+            next_obj = l_obj.next
 
-            l_obj = l_obj.next
+            # person 以外はフレームから削除 → nvdsosd には渡さない
+            if obj_meta.class_id != PERSON_CLASS_ID:
+                pyds.nvds_remove_obj_meta_from_frame(frame_meta, obj_meta)
+                l_obj = next_obj
+                continue
+
+            print("class_id:", obj_meta.class_id, "label:", obj_meta.obj_label)
+
+            # ===== person だけここに来る =====
+            rp = obj_meta.rect_params
+
+            # 黒塗りはまだやらず、とりあえず赤枠表示を明示的に指定
+            rp.has_bg_color = 0  # 背景塗りつぶしなし
+            rp.border_width = 3
+            rp.border_color.set(1.0, 0.0, 0.0, 1.0)  # 赤枠
+
+            # 黒塗りする時はこのあたりを使う（後述）
+            # rp.has_bg_color = 1
+            # rp.bg_color.set(0.0, 0.0, 0.0, 1.0)  # RGBA 黒・不透明
+            # rp.border_width = 0
+            # rp.border_color.set(0.0, 0.0, 0.0, 0.0)
+
+            l_obj = next_obj
+
         l_frame = l_frame.next
 
     return Gst.PadProbeReturn.OK
+
 
 # --- 動的パッド連結: nvurisrcbin の src → queue の sink を接続 ---
 def on_src_pad_added(src, pad, target):
