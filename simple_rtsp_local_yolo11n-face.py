@@ -293,6 +293,20 @@ def main() -> int:
     args = parse_args()
     configure_logging(args.log_level)
 
+    # モデルディレクトリの存在確認と作成
+    import os
+    model_dir = "./models/yolo11n-face"
+    if not os.path.exists(model_dir):
+        LOG.info(f"モデルディレクトリを作成: {model_dir}")
+        os.makedirs(model_dir, exist_ok=True)
+    
+    # engineファイルのパスをログ出力
+    engine_path = f"{model_dir}/yolo11n-face_b1_fp16.engine"
+    if os.path.exists(engine_path):
+        LOG.info(f"既存のTensorRTエンジンを使用: {engine_path}")
+    else:
+        LOG.info(f"TensorRTエンジンを生成します（初回のみ数分かかります）: {engine_path}")
+
     pipe = build_pipeline(args)
     loop = GLib.MainLoop()
     bus = pipe.get_bus()
