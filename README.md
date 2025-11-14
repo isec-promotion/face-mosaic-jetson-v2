@@ -247,7 +247,25 @@ python3 export_yolo11.py \
 
 TensorRT エンジンファイルは、プログラムの初回実行時に自動的に生成されます。手動で生成する必要はありませんが、初回実行時には数分かかる場合があります。
 
-生成されるエンジンファイル:
+**重要**: DeepStream は初回実行時に、カレントディレクトリに `model_b1_gpu0_fp16.engine` という名前でエンジンファイルを生成します。このファイルを適切な場所にリネーム・移動する必要があります。
+
+#### エンジンファイルの移動手順
+
+```bash
+# プロジェクトディレクトリで初回実行
+cd ~/face-mosaic-jetson-v2
+python3 simple_rtsp_local_yolo11n-face.py "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101"
+
+# 初回実行後、生成されたengineファイルを確認
+ls -l model_b1_gpu0_fp16.engine
+
+# engineファイルをmodelsディレクトリにリネーム・移動
+mv model_b1_gpu0_fp16.engine models/yolo11n-face/yolo11n-face_b1_fp16.engine
+
+# 次回以降は、設定ファイルで指定したパスのengineファイルが使用されます
+```
+
+最終的に生成されるエンジンファイル:
 
 ```
 models/yolo11n-face/yolo11n-face_b1_fp16.engine
@@ -302,7 +320,213 @@ python3 simple_rtsp_local_yolo11n-face.py \
 
 **プログラムの終了**: キーボードで `q` を押すか、`Ctrl+C` で終了します。
 
+### YOLOv8n 汎用物体検出モデルの導入
+
+YOLOv8n は Ultralytics 社が開発した YOLO シリーズの最新版（v8）の nano バージョンで、汎用的な物体検出に使用できます。COCO データセット（80 クラス）でトレーニングされており、人物、車、動物など様々な物体を検出できます。
+
+### YOLOv8n の特徴
+
+- **汎用性**: COCO データセット 80 クラスに対応し、様々な物体を検出可能
+- **軽量**: nano バージョンのため、Jetson デバイスでもリアルタイム処理が可能
+- **高精度**: YOLOv5 と比較して精度と速度が向上
+- **柔軟性**: `--target-class` オプションで特定のクラスのみを検出・黒塗り可能
+
+### YOLOv8n で検出可能な主なクラス
+
+| クラス ID | クラス名   | 説明       |
+| --------- | ---------- | ---------- |
+| 0         | person     | 人物       |
+| 1         | bicycle    | 自転車     |
+| 2         | car        | 自動車     |
+| 3         | motorcycle | オートバイ |
+| 5         | bus        | バス       |
+| 7         | truck      | トラック   |
+| 15        | cat        | 猫         |
+| 16        | dog        | 犬         |
+| 56        | chair      | 椅子       |
+| 57        | couch      | ソファ     |
+| 62        | tv         | テレビ     |
+| 63        | laptop     | ノート PC  |
+| 67        | cell phone | 携帯電話   |
+
+完全なクラスリストは [COCO Dataset](https://cocodataset.org/#explore) を参照してください。
+
+### 1. YOLOv8n モデルのダウンロード
+
+Ultralytics の公式リポジトリから YOLOv8n モデルをダウンロードします:
+
+```bash
+# プロジェクトディレクトリに移動
+cd ~/face-mosaic-jetson-v2
+
+# モデル格納ディレクトリを作成
+mkdir -p models/yolov8n
+
+# YOLOv8nモデルをダウンロード
+cd models/yolov8n
+wget https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
+```
+
+**参考**: [Ultralytics YOLOv8 Documentation](https://docs.ultralytics.com/ja/models/yolov8/)
+
+### 2. PT モデルから ONNX への変換
+
+ダウンロードした PyTorch モデル(.pt)を ONNX 形式に変換します:
+
+```bash
+# Ultralyticsディレクトリに移動
+cd ~/ultralytics
+
+# DeepStream-Yoloのエクスポートスクリプトをコピー（まだの場合）
+cp ~/DeepStream-Yolo/utils/export_yolov8.py .
+
+# YOLOv8nモデルをONNXに変換
+# 出力先を直接指定
+python3 export_yolov8.py \
+    -w ~/face-mosaic-jetson-v2/models/yolov8n/yolov8n.pt \
+    --simplify \
+    --dynamic \
+    -o ~/face-mosaic-jetson-v2/models/yolov8n/yolov8n.onnx
+
+# 指定ディレクトリにONNXが直接生成される
+```
+
+**変換オプションの説明**:
+
+- `--simplify`: ONNX モデルを最適化（推奨）
+- `--dynamic`: 動的バッチサイズを有効化（DeepStream 6.1 以降）
+
+### 3. TensorRT エンジンファイルの生成
+
+TensorRT エンジンファイルは、プログラムの初回実行時に自動的に生成されます。手動で生成する必要はありませんが、初回実行時には数分かかる場合があります。
+
+**重要**: DeepStream は初回実行時に、カレントディレクトリに `model_b1_gpu0_fp16.engine` という名前でエンジンファイルを生成します。このファイルを適切な場所にリネーム・移動する必要があります。
+
+#### エンジンファイルの移動手順
+
+```bash
+# プロジェクトディレクトリで初回実行
+cd ~/face-mosaic-jetson-v2
+python3 simple_rtsp_local_yolov8n.py "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101"
+
+# 初回実行後、生成されたengineファイルを確認
+ls -l model_b1_gpu0_fp16.engine
+
+# engineファイルをmodelsディレクトリにリネーム・移動
+mv model_b1_gpu0_fp16.engine models/yolov8n/yolov8n_b1_fp16.engine
+
+# 次回以降は、設定ファイルで指定したパスのengineファイルが使用されます
+```
+
+最終的に生成されるエンジンファイル:
+
+```
+models/yolov8n/yolov8n_b1_fp16.engine
+```
+
+### 4. 設定ファイルの確認
+
+`config_infer_primary_face_yolov8n.txt`が正しく設定されていることを確認します:
+
+```ini
+[property]
+onnx-file=./models/yolov8n/yolov8n.onnx
+model-engine-file=./models/yolov8n/yolov8n_b1_fp16.engine
+num-detected-classes=80  # COCOデータセット（80クラス）
+```
+
+DeepStream-YOLO カスタムライブラリのパスが環境に合っているか確認してください:
+
+```bash
+# ライブラリの存在確認
+ls -l /opt/nvidia/deepstream/deepstream-7.1/lib/libnvdsinfer_custom_impl_Yolo.so
+
+# パスが異なる場合は設定ファイルを編集
+# 例: JetPack 5.1.3の場合
+# custom-lib-path=/opt/nvidia/deepstream/deepstream-6.3/lib/libnvdsinfer_custom_impl_Yolo.so
+```
+
+### 5. プログラムの実行
+
+YOLOv8n プログラムを実行します:
+
+```bash
+# 基本的な使用方法（デフォルト: person=クラスID 0を黒塗り）
+python3 simple_rtsp_local_yolov8n.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101"
+
+# 特定のクラスを指定（例: car=クラスID 2）
+python3 simple_rtsp_local_yolov8n.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --target-class 2
+
+# 解像度とフレームレートを指定
+python3 simple_rtsp_local_yolov8n.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --width 1920 --height 1080 --fps 30 \
+    --target-class 0
+
+# TCP接続を使用
+python3 simple_rtsp_local_yolov8n.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --tcp
+
+# デバッグモード（検出情報を詳細表示）
+python3 simple_rtsp_local_yolov8n.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --log-level DEBUG
+```
+
+**プログラムの終了**: キーボードで `q` を押すか、`Ctrl+C` で終了します。
+
+**重要オプション**:
+
+- `--target-class`: 黒塗り対象のクラス ID を指定（デフォルト: 0=person）
+- `--infer-config`: 設定ファイルのパス（デフォルト: ./config_infer_primary_face_yolov8n.txt）
+
 ### トラブルシューティング
+
+#### モデルが見つからない
+
+エラー: `Unable to open model file`
+
+確認事項:
+
+```bash
+# ONNXファイルの存在確認
+ls -l models/yolov8n/yolov8n.onnx
+
+# パスが正しいか設定ファイルを確認
+cat config_infer_primary_face_yolov8n.txt | grep onnx-file
+```
+
+#### TensorRT エンジン生成エラー
+
+初回実行時にエンジン生成でエラーが発生した場合:
+
+```bash
+# 既存のengineファイルを削除して再生成
+rm models/yolov8n/*.engine
+
+# プログラムを再実行（エンジンが自動生成される）
+python3 simple_rtsp_local_yolov8n.py "rtsp://..." --target-class 0
+```
+
+#### 物体が検出されない
+
+検出閾値を調整してみてください:
+
+```ini
+# config_infer_primary_face_yolov8n.txtを編集
+[class-attrs-all]
+pre-cluster-threshold=0.25  # デフォルトは0.30、より低い値で試す
+```
+
+#### 複数のクラスを同時に黒塗りしたい場合
+
+現在のプログラムは単一のクラス ID のみをサポートしています。複数のクラスを黒塗りする場合は、プログラムを修正して `--target-class` に複数の値を受け付けるようにする必要があります。
+
+## トラブルシューティング
 
 #### モデルが見つからない
 
