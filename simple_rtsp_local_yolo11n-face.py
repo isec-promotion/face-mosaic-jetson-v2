@@ -133,19 +133,27 @@ def osd_sink_pad_buffer_probe(pad, info, u_data):
             except StopIteration:
                 break
 
-            # 顔（class_id = 0）のみ処理
-            if obj_meta.class_id == FACE_CLASS_ID:
-                LOG.debug(f"Face detected: class_id={obj_meta.class_id}, confidence={obj_meta.confidence:.2f}")
-                
-                rp = obj_meta.rect_params
+            # 次のノードを先に覚えておく（削除してもループを進められるように）
+            next_obj = l_obj.next
 
-                # 黒塗り処理（背景を黒で塗りつぶし）
-                rp.has_bg_color = 1
-                rp.bg_color.set(0.0, 0.0, 0.0, 1.0)  # RGBA 黒・不透明
-                rp.border_width = 0  # 枠線なし
-                rp.border_color.set(0.0, 0.0, 0.0, 0.0)
+            # 顔以外はフレームから削除 → nvdsosd には渡さない（赤枠表示を防ぐ）
+            if obj_meta.class_id != FACE_CLASS_ID:
+                pyds.nvds_remove_obj_meta_from_frame(frame_meta, obj_meta)
+                l_obj = next_obj
+                continue
 
-            l_obj = l_obj.next
+            # ===== 顔（class_id = 0）のみここに来る =====
+            LOG.debug(f"Face detected: class_id={obj_meta.class_id}, confidence={obj_meta.confidence:.2f}")
+            
+            rp = obj_meta.rect_params
+
+            # 黒塗り処理（背景を黒で塗りつぶし）
+            rp.has_bg_color = 1
+            rp.bg_color.set(0.0, 0.0, 0.0, 1.0)  # RGBA 黒・不透明
+            rp.border_width = 0  # 枠線なし
+            rp.border_color.set(0.0, 0.0, 0.0, 0.0)
+
+            l_obj = next_obj
 
         l_frame = l_frame.next
 
