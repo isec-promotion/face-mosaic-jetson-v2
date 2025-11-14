@@ -211,7 +211,7 @@ mkdir -p models/yolo11n-face
 
 # Hugging Faceからモデルをダウンロード
 cd models/yolo11n-face
-wget https://huggingface.co/AdamCodd/YOLOv11n-face-detection/resolve/main/yolo11n-face.pt
+wget https://huggingface.co/AdamCodd/YOLOv11n-face-detection/resolve/main/model.pt　-O yolo11n-face.pt
 ```
 
 **参考**: [YOLO11n-face on Hugging Face](https://huggingface.co/AdamCodd/YOLOv11n-face-detection)
@@ -228,13 +228,14 @@ cd ~/ultralytics
 cp ~/DeepStream-Yolo/utils/export_yolo11.py .
 
 # YOLO11n-faceモデルをONNXに変換
+# 出力先を直接指定しているので、後で mv は不要
 python3 export_yolo11.py \
     -w ~/face-mosaic-jetson-v2/models/yolo11n-face/yolo11n-face.pt \
     --simplify \
-    --dynamic
+    --dynamic \
+    -o ~/face-mosaic-jetson-v2/models/yolo11n-face/yolo11n-face.onnx
 
-# 変換されたONNXファイルをモデルディレクトリに移動
-mv yolo11n-face.pt.onnx ~/face-mosaic-jetson-v2/models/yolo11n-face/yolo11n-face.onnx
+# これで指定ディレクトリに ONNX が直接生成される
 ```
 
 **変換オプションの説明**:
