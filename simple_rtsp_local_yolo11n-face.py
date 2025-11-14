@@ -296,10 +296,32 @@ def main() -> int:
     # モデルディレクトリの存在確認と作成
     import os
     import glob
+    import configparser
+    
     model_dir = "./models/yolo11n-face"
     if not os.path.exists(model_dir):
         LOG.info(f"モデルディレクトリを作成: {model_dir}")
         os.makedirs(model_dir, exist_ok=True)
+    
+    # 設定ファイルのパス情報をログ出力
+    LOG.info(f"設定ファイル: {args.infer_config}")
+    try:
+        config = configparser.ConfigParser()
+        config.read(args.infer_config)
+        if 'property' in config:
+            onnx_file = config['property'].get('onnx-file', 'N/A')
+            engine_file = config['property'].get('model-engine-file', 'N/A')
+            
+            # 絶対パスに変換して表示
+            onnx_abs = os.path.abspath(onnx_file) if onnx_file != 'N/A' else 'N/A'
+            engine_abs = os.path.abspath(engine_file) if engine_file != 'N/A' else 'N/A'
+            
+            LOG.info(f"設定: onnx-file = {onnx_file}")
+            LOG.info(f"  → 絶対パス: {onnx_abs}")
+            LOG.info(f"設定: model-engine-file = {engine_file}")
+            LOG.info(f"  → 絶対パス: {engine_abs}")
+    except Exception as e:
+        LOG.warning(f"設定ファイルの読み込みに失敗: {e}")
     
     # 既存のengineファイルを確認
     engine_files = glob.glob(f"{model_dir}/*.engine")
@@ -307,7 +329,6 @@ def main() -> int:
         LOG.info(f"既存のTensorRTエンジンファイル: {', '.join(engine_files)}")
     else:
         LOG.info(f"TensorRTエンジンファイルが見つかりません。初回実行時に自動生成されます（数分かかります）")
-        LOG.info(f"生成場所: {model_dir}/")
 
     pipe = build_pipeline(args)
     loop = GLib.MainLoop()
