@@ -233,7 +233,7 @@ python3 export_yolo11.py \
     -w ~/face-mosaic-jetson-v2/models/yolo11n-face/yolo11n-face.pt \
     --simplify \
     --dynamic \
-    -o ~/face-mosaic-jetson-v2/models/yolo11n-face/yolo11n-face.onnx
+    -o ~/face-mosaic-jetson-v2/model　s/yolo11n-face/yolo11n-face.onnx
 
 # これで指定ディレクトリに ONNX が直接生成される
 ```

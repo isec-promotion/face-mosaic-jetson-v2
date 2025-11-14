@@ -33,7 +33,7 @@ gi.require_version("GLib", "2.0")
 from gi.repository import Gst, GLib
 import pyds
 
-LOG = logging.getLogger("rtsp-yolo11n-face-blackout")
+LOG = logging.getLogger("rtsp-local-yolo11n-face")
 
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
@@ -175,7 +175,7 @@ def on_src_pad_added(src, pad, target):
 
 def build_pipeline(args: argparse.Namespace) -> Gst.Pipeline:
     Gst.init(None)
-    pipe = Gst.Pipeline.new("rtsp-yolo11n-face-blackout-local")
+    pipe = Gst.Pipeline.new("rtsp-local-yolo11n-face")
     if not pipe:
         raise RuntimeError("Pipeline作成失敗")
 
