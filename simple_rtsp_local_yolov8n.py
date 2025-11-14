@@ -150,16 +150,22 @@ def osd_sink_pad_buffer_probe(pad, info, u_data):
 
             # ===== ターゲットクラス（人体）のみここに来る =====
             LOG.debug(f"Object detected: class_id={obj_meta.class_id}, confidence={obj_meta.confidence:.2f}")
+
             
             # ▼▼▼ 黒塗り処理をコメントアウトまたは削除 ▼▼▼
-            # rp = obj_meta.rect_params
+            rp = obj_meta.rect_params
             #
             # # 黒塗り処理（背景を黒で塗りつぶし）
-            # rp.has_bg_color = 1
-            # rp.bg_color.set(0.0, 0.0, 0.0, 1.0)  # RGBA 黒・不透明
-            # rp.border_width = 0  # 枠線なし
-            # rp.border_color.set(0.0, 0.0, 0.0, 0.0)
+            rp.has_bg_color = 1
+            rp.bg_color.set(0.0, 0.0, 0.0, 1.0)  # RGBA 黒・不透明
+            rp.border_width = 0  # 枠線なし
+            rp.border_color.set(0.0, 0.0, 0.0, 0.0)
             # ▲▲▲ ここまでをコメントアウトまたは削除 ▲▲▲
+
+            LOG.debug(
+                f"person: conf={obj_meta.confidence:.2f}, "
+                f"w={rp.width:.1f}, h={rp.height:.1f}"
+            )
 
             l_obj = next_obj
 
