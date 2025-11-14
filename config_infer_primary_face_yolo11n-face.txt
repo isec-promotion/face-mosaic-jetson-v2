@@ -4,7 +4,8 @@
 onnx-file=./models/yolo11n-face/yolo11n-face.onnx
 
 # TensorRTエンジンファイル（初回実行時に自動生成）
-model-engine-file=./models/yolo11n-face/yolo11n-face_b1_fp16.engine
+# ONNXと同じディレクトリに生成されるように拡張子のみ指定
+model-engine-file=./models/yolo11n-face/yolo11n-face.onnx_b1_gpu0_fp16.engine
 
 network-type=0                 # detector
 num-detected-classes=1         # 顔のみ（1クラス）

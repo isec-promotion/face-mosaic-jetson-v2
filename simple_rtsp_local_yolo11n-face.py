@@ -284,7 +284,7 @@ def install_quit_key(loop: GLib.MainLoop):
             if ch == 'q':
                 LOG.info("q キー検出 → 終了します")
                 user_data.quit()
-                return False  # これ以上ウォッチしない
+                return False  # これ以上　ウォッチしない
         return True
 
     GLib.io_add_watch(io, GLib.IOCondition.IN, _on_key, loop)
@@ -295,17 +295,19 @@ def main() -> int:
 
     # モデルディレクトリの存在確認と作成
     import os
+    import glob
     model_dir = "./models/yolo11n-face"
     if not os.path.exists(model_dir):
         LOG.info(f"モデルディレクトリを作成: {model_dir}")
         os.makedirs(model_dir, exist_ok=True)
     
-    # engineファイルのパスをログ出力
-    engine_path = f"{model_dir}/yolo11n-face_b1_fp16.engine"
-    if os.path.exists(engine_path):
-        LOG.info(f"既存のTensorRTエンジンを使用: {engine_path}")
+    # 既存のengineファイルを確認
+    engine_files = glob.glob(f"{model_dir}/*.engine")
+    if engine_files:
+        LOG.info(f"既存のTensorRTエンジンファイル: {', '.join(engine_files)}")
     else:
-        LOG.info(f"TensorRTエンジンを生成します（初回のみ数分かかります）: {engine_path}")
+        LOG.info(f"TensorRTエンジンファイルが見つかりません。初回実行時に自動生成されます（数分かかります）")
+        LOG.info(f"生成場所: {model_dir}/")
 
     pipe = build_pipeline(args)
     loop = GLib.MainLoop()
