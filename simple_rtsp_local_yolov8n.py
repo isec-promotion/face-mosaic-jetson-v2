@@ -112,7 +112,10 @@ def get_batch_meta(gst_buffer):
     return None
 
 def osd_sink_pad_buffer_probe(pad, info, u_data):
-    """nvdsosd の前で、検出された物体のBBoxを黒塗り処理"""
+    """
+    nvdsosd の前で、検出された物体のBBoxを処理
+    ★ 変更：黒塗り処理を削除し、人体以外のクラスを削除する（もしあれば）
+    """
     target_class_id = u_data
     gst_buffer = info.get_buffer()
     if not gst_buffer:
@@ -120,7 +123,6 @@ def osd_sink_pad_buffer_probe(pad, info, u_data):
 
     batch_meta = get_batch_meta(gst_buffer)
     if not batch_meta:
-        # バインディングの差異/未ロードでも処理継続（描画スキップ）
         return Gst.PadProbeReturn.OK
 
     l_frame = batch_meta.frame_meta_list
@@ -137,25 +139,27 @@ def osd_sink_pad_buffer_probe(pad, info, u_data):
             except StopIteration:
                 break
 
-            # 次のノードを先に覚えておく（削除してもループを進められるように）
             next_obj = l_obj.next
 
-            # ターゲットクラス以外はフレームから削除 → nvdsosd には渡さない
+            # ターゲットクラス以外はフレームから削除
+            # (nvinfer設定でフィルタ済みだが、念のため)
             if obj_meta.class_id != target_class_id:
                 pyds.nvds_remove_obj_meta_from_frame(frame_meta, obj_meta)
                 l_obj = next_obj
                 continue
 
-            # ===== ターゲットクラスのみここに来る =====
+            # ===== ターゲットクラス（人体）のみここに来る =====
             LOG.debug(f"Object detected: class_id={obj_meta.class_id}, confidence={obj_meta.confidence:.2f}")
             
-            rp = obj_meta.rect_params
-
-            # 黒塗り処理（背景を黒で塗りつぶし）
-            rp.has_bg_color = 1
-            rp.bg_color.set(0.0, 0.0, 0.0, 1.0)  # RGBA 黒・不透明
-            rp.border_width = 0  # 枠線なし
-            rp.border_color.set(0.0, 0.0, 0.0, 0.0)
+            # ▼▼▼ 黒塗り処理をコメントアウトまたは削除 ▼▼▼
+            # rp = obj_meta.rect_params
+            #
+            # # 黒塗り処理（背景を黒で塗りつぶし）
+            # rp.has_bg_color = 1
+            # rp.bg_color.set(0.0, 0.0, 0.0, 1.0)  # RGBA 黒・不透明
+            # rp.border_width = 0  # 枠線なし
+            # rp.border_color.set(0.0, 0.0, 0.0, 0.0)
+            # ▲▲▲ ここまでをコメントアウトまたは削除 ▲▲▲
 
             l_obj = next_obj
 
