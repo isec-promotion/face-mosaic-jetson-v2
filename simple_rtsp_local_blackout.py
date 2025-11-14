@@ -8,6 +8,16 @@ RTSP → nvurisrcbin(HWデコード/動的pad) → queue → nvvideoconvert
 
 - q キーで終了（GLib IO watch / 非同期1文字読み）
 - pyds の BatchMeta 取得API差異に互換対応
+
+# 基本的な使用方法 
+python3 simple_rtsp_local_blackout.py  "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101"  --infer-config ./config_infer_primary_face_yolo11.txt 
+
+# 解像度とフレームレートを指定 
+python3 simple_rtsp_local_blackout.py  "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101"  --infer-config ./config_infer_primary_face_yolo11.txt  --width 1920 --height 1080 --fps 30 
+
+# TCP接続を使用する場合（UDPで接続できない場合） 
+python3 simple_rtsp_local_blackout.py  "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101"  --infer-config ./config_infer_primary_face_yolo11.txt  --tcp
+
 """
 import argparse
 import logging
