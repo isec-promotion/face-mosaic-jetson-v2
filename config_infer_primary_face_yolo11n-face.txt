@@ -1,0 +1,33 @@
+[property]
+# YOLO11n-face ONNXモデルのパス
+# Hugging Faceからダウンロードしたモデルを配置
+onnx-file=./models/yolo11n-face/yolo11n-face.onnx
+
+# TensorRTエンジンファイル（初回実行時に自動生成）
+model-engine-file=./models/yolo11n-face/yolo11n-face_b1_fp16.engine
+
+network-type=0                 # detector
+num-detected-classes=1         # 顔のみ（1クラス）
+batch-size=1
+gie-unique-id=1
+network-mode=2                 # FP16推論
+infer-dims=3;640;640           # 入力サイズ 640x640
+maintain-aspect-ratio=1
+
+# DeepStream-YOLOカスタムライブラリのパス
+# ビルドしたライブラリの絶対パスを指定してください
+custom-lib-path=/opt/nvidia/deepstream/deepstream-7.1/lib/libnvdsinfer_custom_impl_Yolo.so
+
+# YOLO11パーサー関数名
+parse-bbox-func-name=NvDsInferParseYolo
+
+# エンジン作成関数名
+engine-create-func-name=NvDsInferYoloCudaEngineGet
+
+[class-attrs-all]
+# 検出閾値（顔検出の信頼度スコア）
+pre-cluster-threshold=0.30
+# NMS（Non-Maximum Suppression）のIoU閾値
+nms-iou-threshold=0.50
+# 最大検出数
+topk=100

@@ -188,6 +188,157 @@ custom-lib-path=/home/Jetson/DeepStream-Yolo/nvdsinfer_custom_impl_Yolo/libnvdsi
 pip3 install pyds gi opencv-python
 ```
 
+## YOLO11n-face 顔検出モデルの導入（推奨）
+
+YOLO11n-face は顔検出に特化したコミュニティモデルで、YOLO11 の軽量版(nano)をベースに顔検出用にファインチューニングされています。汎用の YOLO11 モデルと比較して、顔検出の精度が高く、処理も高速です。
+
+### YOLO11n-face の特徴
+
+- **高精度**: 顔検出専用にトレーニングされており、小さい顔や角度のある顔も高精度で検出
+- **軽量**: nano バージョンのため、Jetson デバイスでもリアルタイム処理が可能
+- **1 クラス検出**: 顔のみを検出するため、処理がシンプルで高速
+
+### 1. YOLO11n-face モデルのダウンロード
+
+Hugging Face からコミュニティが公開している YOLO11n-face モデルをダウンロードします:
+
+```bash
+# プロジェクトディレクトリに移動
+cd ~/face-mosaic-jetson-v2
+
+# モデル格納ディレクトリを作成
+mkdir -p models/yolo11n-face
+
+# Hugging Faceからモデルをダウンロード
+cd models/yolo11n-face
+wget https://huggingface.co/AdamCodd/YOLOv11n-face-detection/resolve/main/yolo11n-face.pt
+```
+
+**参考**: [YOLO11n-face on Hugging Face](https://huggingface.co/AdamCodd/YOLOv11n-face-detection)
+
+### 2. PT モデルから ONNX への変換
+
+ダウンロードした PyTorch モデル(.pt)を ONNX 形式に変換します:
+
+```bash
+# Ultralyticsディレクトリに移動
+cd ~/ultralytics
+
+# DeepStream-Yoloのエクスポートスクリプトをコピー（まだの場合）
+cp ~/DeepStream-Yolo/utils/export_yolo11.py .
+
+# YOLO11n-faceモデルをONNXに変換
+python3 export_yolo11.py \
+    -w ~/face-mosaic-jetson-v2/models/yolo11n-face/yolo11n-face.pt \
+    --simplify \
+    --dynamic
+
+# 変換されたONNXファイルをモデルディレクトリに移動
+mv yolo11n-face.pt.onnx ~/face-mosaic-jetson-v2/models/yolo11n-face/yolo11n-face.onnx
+```
+
+**変換オプションの説明**:
+
+- `--simplify`: ONNX モデルを最適化（推奨）
+- `--dynamic`: 動的バッチサイズを有効化（DeepStream 6.1 以降）
+
+### 3. TensorRT エンジンファイルの生成
+
+TensorRT エンジンファイルは、プログラムの初回実行時に自動的に生成されます。手動で生成する必要はありませんが、初回実行時には数分かかる場合があります。
+
+生成されるエンジンファイル:
+
+```
+models/yolo11n-face/yolo11n-face_b1_fp16.engine
+```
+
+### 4. 設定ファイルの確認
+
+`config_infer_primary_face_yolo11n-face.txt`が正しく設定されていることを確認します:
+
+```ini
+[property]
+onnx-file=./models/yolo11n-face/yolo11n-face.onnx
+model-engine-file=./models/yolo11n-face/yolo11n-face_b1_fp16.engine
+num-detected-classes=1  # 顔のみ
+```
+
+DeepStream-YOLO カスタムライブラリのパスが環境に合っているか確認してください:
+
+```bash
+# ライブラリの存在確認
+ls -l /opt/nvidia/deepstream/deepstream-7.1/lib/libnvdsinfer_custom_impl_Yolo.so
+
+# パスが異なる場合は設定ファイルを編集
+# 例: JetPack 5.1.3の場合
+# custom-lib-path=/opt/nvidia/deepstream/deepstream-6.3/lib/libnvdsinfer_custom_impl_Yolo.so
+```
+
+### 5. プログラムの実行
+
+YOLO11n-face 専用プログラムを実行します:
+
+```bash
+# 基本的な使用方法
+python3 simple_rtsp_local_yolo11n-face.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101"
+
+# 解像度とフレームレートを指定
+python3 simple_rtsp_local_yolo11n-face.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --width 1920 --height 1080 --fps 30
+
+# TCP接続を使用
+python3 simple_rtsp_local_yolo11n-face.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --tcp
+
+# デバッグモード（検出情報を詳細表示）
+python3 simple_rtsp_local_yolo11n-face.py \
+    "rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101" \
+    --log-level DEBUG
+```
+
+**プログラムの終了**: キーボードで `q` を押すか、`Ctrl+C` で終了します。
+
+### トラブルシューティング
+
+#### モデルが見つからない
+
+エラー: `Unable to open model file`
+
+確認事項:
+
+```bash
+# ONNXファイルの存在確認
+ls -l models/yolo11n-face/yolo11n-face.onnx
+
+# パスが正しいか設定ファイルを確認
+cat config_infer_primary_face_yolo11n-face.txt | grep onnx-file
+```
+
+#### TensorRT エンジン生成エラー
+
+初回実行時にエンジン生成でエラーが発生した場合:
+
+```bash
+# 既存のengineファイルを削除して再生成
+rm models/yolo11n-face/*.engine
+
+# プログラムを再実行（エンジンが自動生成される）
+python3 simple_rtsp_local_yolo11n-face.py "rtsp://..."
+```
+
+#### 顔が検出されない
+
+検出閾値を調整してみてください:
+
+```ini
+# config_infer_primary_face_yolo11n-face.txtを編集
+[class-attrs-all]
+pre-cluster-threshold=0.25  # デフォルトは0.30、より低い値で試す
+```
+
 ## 使用方法
 
 ### ローカル表示モード（simple_rtsp_local_blackout.py）
