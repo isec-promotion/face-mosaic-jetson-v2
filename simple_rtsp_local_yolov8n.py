@@ -112,10 +112,6 @@ def get_batch_meta(gst_buffer):
     return None
 
 def osd_sink_pad_buffer_probe(pad, info, u_data):
-    """
-    nvdsosd の前で、検出された物体のBBoxを処理
-    ★ 変更：黒塗り処理を削除し、人体以外のクラスを削除する（もしあれば）
-    """
     target_class_id = u_data
     gst_buffer = info.get_buffer()
     if not gst_buffer:
@@ -141,26 +137,36 @@ def osd_sink_pad_buffer_probe(pad, info, u_data):
 
             next_obj = l_obj.next
 
-            # ターゲットクラス以外はフレームから削除
-            # (nvinfer設定でフィルタ済みだが、念のため)
+            # ターゲットクラス以外は削除
             if obj_meta.class_id != target_class_id:
                 pyds.nvds_remove_obj_meta_from_frame(frame_meta, obj_meta)
                 l_obj = next_obj
                 continue
 
-            # ===== ターゲットクラス（人体）のみここに来る =====
-            LOG.debug(f"Object detected: class_id={obj_meta.class_id}, confidence={obj_meta.confidence:.2f}")
-
-            
-            # ▼▼▼ 黒塗り処理をコメントアウトまたは削除 ▼▼▼
+            # ===== ここから PC版と同等のフィルタ =====
             rp = obj_meta.rect_params
-            #
-            # # 黒塗り処理（背景を黒で塗りつぶし）
+            w = rp.width
+            h = rp.height
+
+            # 小さすぎる検出を除外（PC版と同じ条件）
+            if w < 30 or h < 50:
+                pyds.nvds_remove_obj_meta_from_frame(frame_meta, obj_meta)
+                l_obj = next_obj
+                continue
+
+            # 不自然なアスペクト比を除外（PC版と同じ条件）
+            aspect_ratio = w / h if h > 0 else 0
+            if aspect_ratio < 0.2 or aspect_ratio > 3.0:
+                pyds.nvds_remove_obj_meta_from_frame(frame_meta, obj_meta)
+                l_obj = next_obj
+                continue
+            # ===== フィルタここまで =====
+
+            # 残ったものだけ黒塗り
             rp.has_bg_color = 1
-            rp.bg_color.set(0.0, 0.0, 0.0, 1.0)  # RGBA 黒・不透明
-            rp.border_width = 0  # 枠線なし
+            rp.bg_color.set(0.0, 0.0, 0.0, 1.0)
+            rp.border_width = 0
             rp.border_color.set(0.0, 0.0, 0.0, 0.0)
-            # ▲▲▲ ここまでをコメントアウトまたは削除 ▲▲▲
 
             LOG.debug(
                 f"person: conf={obj_meta.confidence:.2f}, "
@@ -172,7 +178,6 @@ def osd_sink_pad_buffer_probe(pad, info, u_data):
         l_frame = l_frame.next
 
     return Gst.PadProbeReturn.OK
-
 
 # --- 動的パッド連結: nvurisrcbin の src → queue の sink を接続 ---
 def on_src_pad_added(src, pad, target):

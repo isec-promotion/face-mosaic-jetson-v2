@@ -28,12 +28,13 @@ engine-create-func-name=NvDsInferYoloCudaEngineGet
 
 # まず「全クラス」をほぼ全部落とす設定にする
 [class-attrs-all]
-pre-cluster-threshold=1.0
+pre-cluster-threshold=1.1
 nms-iou-threshold=0.50
 topk=300
 
 # そのうえで「person(class_id=0)」だけ閾値を下げて生かす
 [class-attrs-0]
-pre-cluster-threshold=0.25
+pre-cluster-threshold=0.5
 nms-iou-threshold=0.50
 topk=300
+
